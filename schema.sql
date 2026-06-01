@@ -71,8 +71,15 @@ CREATE TABLE IF NOT EXISTS trades (
     price NUMERIC(20, 8) NOT NULL CHECK (price >= 0),
     value NUMERIC(20, 8) NOT NULL CHECK (value >= 0),
     currency TEXT NOT NULL DEFAULT 'USD',
+    account_balance_after NUMERIC(20, 8),
+    position_qty_after NUMERIC(20, 8),
+    realized_pnl NUMERIC(20, 8),
     executed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS account_balance_after NUMERIC(20, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS position_qty_after NUMERIC(20, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC(20, 8);
 
 CREATE TABLE IF NOT EXISTS account_transactions (
     id BIGSERIAL PRIMARY KEY,
@@ -83,8 +90,20 @@ CREATE TABLE IF NOT EXISTS account_transactions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS equity_history (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    equity NUMERIC(20, 8) NOT NULL,
+    cash_balance NUMERIC(20, 8) NOT NULL,
+    positions_value NUMERIC(20, 8) NOT NULL,
+    reason TEXT NOT NULL CHECK (reason IN ('trade', 'deposit', 'withdrawal', 'adjustment', 'reset')),
+    related_trade_id BIGINT REFERENCES trades(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_trades_user_executed ON trades(user_id, executed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_user_created ON account_transactions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_equity_history_user_created ON equity_history(user_id, created_at ASC);

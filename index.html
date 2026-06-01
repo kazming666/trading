@@ -60,6 +60,33 @@
         </div>
       </section>
 
+      <section class="metrics-grid stats-grid" aria-label="user stats">
+        <div class="metric">
+          <span>&#24635;&#20132;&#26131;&#27425;&#25968;</span>
+          <strong id="statTotalTrades">0</strong>
+        </div>
+        <div class="metric">
+          <span>&#32988;&#29575;</span>
+          <strong id="statWinRate">0.00%</strong>
+        </div>
+        <div class="metric">
+          <span>&#26368;&#22823;&#30408;&#21033;&#20132;&#26131;</span>
+          <strong id="statMaxProfit">$0.00</strong>
+        </div>
+        <div class="metric">
+          <span>&#26368;&#22823;&#20111;&#25439;&#20132;&#26131;</span>
+          <strong id="statMaxLoss">$0.00</strong>
+        </div>
+        <div class="metric">
+          <span>&#32047;&#35745;&#20080;&#20837;&#37329;&#39069;</span>
+          <strong id="statBuyValue">$0.00</strong>
+        </div>
+        <div class="metric">
+          <span>&#32047;&#35745;&#21334;&#20986;&#37329;&#39069;</span>
+          <strong id="statSellValue">$0.00</strong>
+        </div>
+      </section>
+
       <section class="workspace">
         <aside class="watchlist-panel" aria-label="watchlist">
           <div class="panel-head">
@@ -142,6 +169,15 @@
 
       <section class="history-panel">
         <div class="panel-head">
+          <h2>&#36134;&#25143;&#36164;&#20135;&#26354;&#32447;</h2>
+        </div>
+        <div class="equity-chart-wrap">
+          <canvas id="equityChart" height="220" aria-label="equity chart"></canvas>
+        </div>
+      </section>
+
+      <section class="history-panel">
+        <div class="panel-head">
           <h2>&#20132;&#26131;&#35760;&#24405;</h2>
           <button id="clearHistoryBtn" class="ghost-btn" type="button">&#28165;&#31354;&#35760;&#24405;</button>
         </div>
@@ -149,20 +185,29 @@
           <table>
             <thead>
               <tr>
+                <th>ID</th>
                 <th>&#26102;&#38388;</th>
                 <th>&#32929;&#31080;</th>
                 <th>&#26041;&#21521;</th>
                 <th>&#25968;&#37327;</th>
                 <th>&#20215;&#26684;</th>
                 <th>&#37329;&#39069;</th>
+                <th>&#25104;&#20132;&#21518;&#20313;&#39069;</th>
+                <th>&#25104;&#20132;&#21518;&#25345;&#20179;</th>
               </tr>
             </thead>
             <tbody id="historyBody"></tbody>
           </table>
         </div>
+        <div class="pagination">
+          <button id="prevPageBtn" type="button">&#19978;&#19968;&#39029;</button>
+          <span id="pageInfo">1 / 1</span>
+          <button id="nextPageBtn" type="button">&#19979;&#19968;&#39029;</button>
+        </div>
       </section>
     </main>
 
-    <script src="app.js?v=20260602c"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="app.js?v=20260602d"></script>
   </body>
 </html>

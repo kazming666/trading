@@ -201,6 +201,36 @@ def ensure_account(conn, user_id):
             )
 
 
+def estimate_positions_value(conn, user_id):
+    with conn.cursor() as cur:
+        cur.execute("SELECT symbol, qty, avg_price FROM positions WHERE user_id = %s AND qty > 0", (user_id,))
+        positions = cur.fetchall()
+    total = Decimal("0")
+    for position in positions:
+        try:
+            price = Decimal(str(normalize_quote(position["symbol"])["price"]))
+        except Exception:
+            price = position["avg_price"]
+        total += position["qty"] * price
+    return total
+
+
+def record_equity_snapshot(conn, user_id, reason, related_trade_id=None):
+    with conn.cursor() as cur:
+        cur.execute("SELECT cash_balance FROM accounts WHERE user_id = %s", (user_id,))
+        account = cur.fetchone()
+    equity = account["cash_balance"] + estimate_positions_value(conn, user_id)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO equity_history (user_id, equity, cash_balance, positions_value, reason, related_trade_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (user_id, equity, account["cash_balance"], equity - account["cash_balance"], reason, related_trade_id),
+        )
+    return equity
+
+
 class Handler(SimpleHTTPRequestHandler):
     GET_ROUTES = {
         "/api/search": "handle_search",
@@ -220,6 +250,9 @@ class Handler(SimpleHTTPRequestHandler):
         "/api/watchlist": "handle_add_watchlist",
         "/api/trade": "handle_trade",
         "/api/history/clear": "handle_clear_history",
+    }
+    DELETE_ROUTES = {
+        "/api/watchlist": "handle_delete_watchlist",
     }
 
     def guess_type(self, path):
@@ -272,6 +305,17 @@ class Handler(SimpleHTTPRequestHandler):
             return
         self.send_error(404, "Not Found")
 
+    def do_DELETE(self):
+        parsed, path = self.route_path()
+        route = self.DELETE_ROUTES.get(path)
+        if route:
+            self.safe_call(getattr(self, route), parsed)
+            return
+        if parsed.path.startswith("/api/"):
+            self.end_json(404, {"error": "API endpoint not found", "path": parsed.path})
+            return
+        self.send_error(404, "Not Found")
+
     def do_HEAD(self):
         parsed, path = self.route_path()
         if path in self.GET_ROUTES or path in self.POST_ROUTES or parsed.path.startswith("/api/"):
@@ -286,7 +330,7 @@ class Handler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/"):
             self.send_response(204)
-            self.send_header("Allow", "GET, POST, HEAD, OPTIONS")
+            self.send_header("Allow", "GET, POST, DELETE, HEAD, OPTIONS")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -379,6 +423,7 @@ class Handler(SimpleHTTPRequestHandler):
                 )
                 user = cur.fetchone()
                 ensure_account(conn, user["id"])
+                record_equity_snapshot(conn, user["id"], "reset")
                 token, expires_at = create_user_session(conn, user["id"])
             conn.commit()
         self.end_json(201, {"user": dict(user)}, {"Set-Cookie": self.cookie_header(token, expires_at)})
@@ -432,8 +477,9 @@ class Handler(SimpleHTTPRequestHandler):
                 positions = cur.fetchall()
                 cur.execute(
                     """
-                    SELECT id, order_id, symbol, side, qty, price, value, currency, executed_at
-                    FROM trades WHERE user_id = %s ORDER BY executed_at DESC LIMIT 160
+                    SELECT id, order_id, symbol, side, qty, price, value, currency,
+                           account_balance_after, position_qty_after, realized_pnl, executed_at
+                    FROM trades WHERE user_id = %s ORDER BY executed_at DESC LIMIT 500
                     """,
                     (user_id,),
                 )
@@ -448,6 +494,35 @@ class Handler(SimpleHTTPRequestHandler):
                     (user_id,),
                 )
                 deposits = cur.fetchall()
+                cur.execute(
+                    """
+                    SELECT equity, cash_balance, positions_value, reason, created_at
+                    FROM equity_history
+                    WHERE user_id = %s
+                    ORDER BY created_at ASC
+                    LIMIT 1000
+                    """,
+                    (user_id,),
+                )
+                equity_history = cur.fetchall()
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS total_trades,
+                        COALESCE(SUM(CASE WHEN side = 'buy' THEN value ELSE 0 END), 0) AS total_buy_value,
+                        COALESCE(SUM(CASE WHEN side = 'sell' THEN value ELSE 0 END), 0) AS total_sell_value,
+                        COALESCE(SUM(CASE WHEN side = 'sell' AND realized_pnl > 0 THEN 1 ELSE 0 END), 0) AS winning_sells,
+                        COALESCE(SUM(CASE WHEN side = 'sell' THEN 1 ELSE 0 END), 0) AS sell_count,
+                        MAX(realized_pnl) AS max_profit_trade,
+                        MIN(realized_pnl) AS max_loss_trade
+                    FROM trades
+                    WHERE user_id = %s
+                    """,
+                    (user_id,),
+                )
+                stats = cur.fetchone()
+        sell_count = int(stats["sell_count"] or 0)
+        winning_sells = int(stats["winning_sells"] or 0)
         return {
             "startingCash": account["starting_cash"],
             "cash": account["cash_balance"],
@@ -469,6 +544,9 @@ class Handler(SimpleHTTPRequestHandler):
                     "price": row["price"],
                     "value": row["value"],
                     "currency": row["currency"],
+                    "accountBalanceAfter": row["account_balance_after"],
+                    "positionQtyAfter": row["position_qty_after"],
+                    "realizedPnl": row["realized_pnl"],
                 }
                 for row in trades
             ],
@@ -481,6 +559,24 @@ class Handler(SimpleHTTPRequestHandler):
                 }
                 for row in deposits
             ],
+            "equityHistory": [
+                {
+                    "time": int(row["created_at"].timestamp() * 1000),
+                    "equity": row["equity"],
+                    "cash": row["cash_balance"],
+                    "positionsValue": row["positions_value"],
+                    "reason": row["reason"],
+                }
+                for row in equity_history
+            ],
+            "stats": {
+                "totalTrades": int(stats["total_trades"] or 0),
+                "winRate": (winning_sells / sell_count * 100) if sell_count else 0,
+                "maxProfitTrade": stats["max_profit_trade"] or 0,
+                "maxLossTrade": stats["max_loss_trade"] or 0,
+                "totalBuyValue": stats["total_buy_value"] or 0,
+                "totalSellValue": stats["total_sell_value"] or 0,
+            },
         }
 
     def handle_state(self, parsed):
@@ -504,6 +600,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "INSERT INTO account_transactions (user_id, type, amount, currency) VALUES (%s, 'deposit', %s, 'USD')",
                     (user["id"], amount),
                 )
+                record_equity_snapshot(conn, user["id"], "deposit")
             conn.commit()
         self.end_json(200, {"state": self.load_state(user["id"])})
 
@@ -523,6 +620,8 @@ class Handler(SimpleHTTPRequestHandler):
                 cur.execute("DELETE FROM trades WHERE user_id = %s", (user["id"],))
                 cur.execute("DELETE FROM orders WHERE user_id = %s", (user["id"],))
                 cur.execute("DELETE FROM account_transactions WHERE user_id = %s", (user["id"],))
+                cur.execute("DELETE FROM equity_history WHERE user_id = %s", (user["id"],))
+                record_equity_snapshot(conn, user["id"], "reset")
             conn.commit()
         self.end_json(200, {"state": self.load_state(user["id"])})
 
@@ -560,6 +659,30 @@ class Handler(SimpleHTTPRequestHandler):
             conn.commit()
         self.end_json(200, {"state": self.load_state(user["id"])})
 
+    def handle_delete_watchlist(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        query = parse_qs(parsed.query)
+        symbol = normalize_market_symbol((query.get("symbol") or [""])[0])
+        if not symbol:
+            self.end_json(400, {"error": "Missing symbol."})
+            return
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM watchlist WHERE user_id = %s AND symbol = %s", (user["id"], symbol))
+                cur.execute("SELECT symbol FROM watchlist WHERE user_id = %s ORDER BY sort_order, symbol LIMIT 1", (user["id"],))
+                next_symbol = cur.fetchone()
+                if not next_symbol:
+                    cur.execute(
+                        "INSERT INTO watchlist (user_id, symbol, sort_order) VALUES (%s, 'AAPL', 0) ON CONFLICT (user_id, symbol) DO NOTHING",
+                        (user["id"],),
+                    )
+                    next_symbol = {"symbol": "AAPL"}
+                cur.execute("UPDATE accounts SET active_symbol = %s, updated_at = now() WHERE user_id = %s", (next_symbol["symbol"], user["id"]))
+            conn.commit()
+        self.end_json(200, {"state": self.load_state(user["id"])})
+
     def handle_trade(self, parsed):
         user = self.require_user()
         if not user:
@@ -584,6 +707,7 @@ class Handler(SimpleHTTPRequestHandler):
                 position = cur.fetchone()
                 current_qty = position["qty"] if position else Decimal("0")
                 avg_price = position["avg_price"] if position else Decimal("0")
+                realized_pnl = None
 
                 if side == "buy":
                     if account["cash_balance"] < value:
@@ -593,6 +717,8 @@ class Handler(SimpleHTTPRequestHandler):
                     new_qty = current_qty + qty
                     new_avg = ((current_qty * avg_price) + value) / new_qty
                     cur.execute("UPDATE accounts SET cash_balance = cash_balance - %s, updated_at = now() WHERE user_id = %s", (value, user["id"]))
+                    account_balance_after = account["cash_balance"] - value
+                    position_qty_after = new_qty
                     cur.execute(
                         """
                         INSERT INTO positions (user_id, symbol, qty, avg_price, currency)
@@ -608,7 +734,10 @@ class Handler(SimpleHTTPRequestHandler):
                         conn.rollback()
                         return
                     new_qty = current_qty - qty
+                    realized_pnl = (price - avg_price) * qty
                     cur.execute("UPDATE accounts SET cash_balance = cash_balance + %s, updated_at = now() WHERE user_id = %s", (value, user["id"]))
+                    account_balance_after = account["cash_balance"] + value
+                    position_qty_after = new_qty
                     if new_qty <= 0:
                         cur.execute("DELETE FROM positions WHERE user_id = %s AND symbol = %s", (user["id"], symbol))
                     else:
@@ -627,9 +756,22 @@ class Handler(SimpleHTTPRequestHandler):
                     """
                     INSERT INTO trades (user_id, order_id, symbol, side, qty, price, value, currency)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
                     """,
                     (user["id"], order_id, symbol, side, qty, price, value, currency),
                 )
+                trade_id = cur.fetchone()["id"]
+                cur.execute(
+                    """
+                    UPDATE trades
+                    SET account_balance_after = %s,
+                        position_qty_after = %s,
+                        realized_pnl = %s
+                    WHERE id = %s
+                    """,
+                    (account_balance_after, position_qty_after, realized_pnl, trade_id),
+                )
+                record_equity_snapshot(conn, user["id"], "trade", trade_id)
             conn.commit()
         self.end_json(200, {"state": self.load_state(user["id"]), "fill": {"symbol": symbol, "side": side, "qty": qty, "price": price, "value": value, "currency": currency}})
 
