@@ -3,56 +3,78 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>模拟股票交易台</title>
-    <link rel="stylesheet" href="styles.css?v=20260528">
+    <title>&#27169;&#25311;&#32929;&#31080;&#20132;&#26131;&#21488;</title>
+    <link rel="stylesheet" href="styles.css?v=20260602b">
   </head>
   <body>
     <main class="app-shell">
       <section class="topbar">
         <div>
           <p class="eyebrow">Paper Trading Desk</p>
-          <h1>模拟股票交易台</h1>
+          <h1>&#27169;&#25311;&#32929;&#31080;&#20132;&#26131;&#21488;</h1>
         </div>
         <div class="status-strip">
-          <span id="feedStatus" class="pill">连接行情</span>
+          <span id="userStatus" class="pill" hidden></span>
+          <button id="logoutBtn" class="ghost-btn" type="button" hidden>&#30331;&#20986;</button>
+          <span id="feedStatus" class="pill">&#36830;&#25509;&#34892;&#24773;</span>
           <span id="clock" class="clock">--:--:--</span>
         </div>
       </section>
 
-      <section class="metrics-grid" aria-label="账户概览">
+      <section id="authPanel" class="auth-panel">
+        <div>
+          <h2>&#30331;&#24405;&#25110;&#27880;&#20876;</h2>
+          <p>&#30331;&#24405;&#21518;&#65292;&#20320;&#30340;&#20313;&#39069;&#12289;&#25345;&#20179;&#21644;&#20132;&#26131;&#35760;&#24405;&#20250;&#20445;&#23384;&#21040;&#26381;&#21153;&#31471;&#12290;</p>
+        </div>
+        <label>
+          Email
+          <input id="emailInput" type="email" autocomplete="email" placeholder="you@example.com">
+        </label>
+        <label>
+          Password
+          <input id="passwordInput" type="password" autocomplete="current-password" placeholder="至少 6 位">
+        </label>
+        <div class="auth-actions">
+          <button id="loginBtn" type="button">&#30331;&#24405;</button>
+          <button id="registerBtn" type="button">&#27880;&#20876;</button>
+        </div>
+        <p id="authHint" class="trade-hint"></p>
+      </section>
+
+      <section class="metrics-grid" aria-label="account overview">
         <div class="metric">
-          <span>账户权益</span>
+          <span>&#36134;&#25143;&#26435;&#30410;</span>
           <strong id="equityValue">$0.00</strong>
         </div>
         <div class="metric">
-          <span>可用现金</span>
+          <span>&#21487;&#29992;&#29616;&#37329;</span>
           <strong id="cashValue">$0.00</strong>
         </div>
         <div class="metric">
-          <span>持仓市值</span>
+          <span>&#25345;&#20179;&#24066;&#20540;</span>
           <strong id="positionValue">$0.00</strong>
         </div>
         <div class="metric">
-          <span>总盈亏</span>
+          <span>&#24635;&#30408;&#20111;</span>
           <strong id="pnlValue">$0.00</strong>
         </div>
       </section>
 
       <section class="workspace">
-        <aside class="watchlist-panel" aria-label="股票列表">
+        <aside class="watchlist-panel" aria-label="watchlist">
           <div class="panel-head">
-            <h2>自选</h2>
-            <button id="resetBtn" class="icon-btn" type="button" title="重置账户">↺</button>
+            <h2>&#33258;&#36873;</h2>
+            <button id="resetBtn" class="icon-btn" type="button" title="reset account">&#8634;</button>
           </div>
           <div class="symbol-entry">
             <input id="symbolInput" type="text" autocomplete="off" placeholder="AAPL / 600519 / 00700">
-            <button id="addSymbolBtn" type="button">添加</button>
+            <button id="addSymbolBtn" type="button">&#28155;&#21152;</button>
           </div>
-          <p class="mini-note">A 股可输入 600519、000001，港股可输入 00700，美股输入 AAPL。</p>
+          <p class="mini-note">A &#32929;&#21487;&#36755;&#20837; 600519&#12289;000001&#65292;&#28207;&#32929;&#21487;&#36755;&#20837; 00700&#65292;&#32654;&#32929;&#36755;&#20837; AAPL&#12290;</p>
           <div id="watchlist" class="watchlist"></div>
         </aside>
 
-        <section class="market-panel" aria-label="行情面板">
+        <section class="market-panel" aria-label="market panel">
           <div class="panel-head market-head">
             <div>
               <h2 id="activeSymbol">AAPL</h2>
@@ -64,75 +86,75 @@
             </div>
           </div>
 
-          <div class="range-tabs" role="group" aria-label="走势图周期">
-            <button class="active" type="button" data-range="1d">1天</button>
-            <button type="button" data-range="1wk">1周</button>
-            <button type="button" data-range="1mo">1个月</button>
-            <button type="button" data-range="3mo">3个月</button>
-            <button type="button" data-range="6mo">6个月</button>
-            <button type="button" data-range="1y">1年</button>
+          <div class="range-tabs" role="group" aria-label="chart range">
+            <button class="active" type="button" data-range="1d">1&#22825;</button>
+            <button type="button" data-range="1wk">1&#21608;</button>
+            <button type="button" data-range="1mo">1&#20010;&#26376;</button>
+            <button type="button" data-range="3mo">3&#20010;&#26376;</button>
+            <button type="button" data-range="6mo">6&#20010;&#26376;</button>
+            <button type="button" data-range="1y">1&#24180;</button>
           </div>
 
           <div class="chart-wrap">
-            <canvas id="priceChart" width="900" height="340" aria-label="价格走势"></canvas>
+            <canvas id="priceChart" width="900" height="340" aria-label="price chart"></canvas>
             <div id="chartTooltip" class="chart-tooltip" hidden></div>
           </div>
 
           <div class="config-row">
             <label>
-              初始模拟资金
+              &#21021;&#22987;&#27169;&#25311;&#36164;&#37329;
               <input id="startingCashInput" type="number" min="100" step="100" value="100000">
             </label>
             <label>
-              增加入金
-              <input id="depositInput" type="number" min="1" step="100" placeholder="输入金额">
+              &#22686;&#21152;&#20837;&#37329;
+              <input id="depositInput" type="number" min="1" step="100" placeholder="&#36755;&#20837;&#37329;&#39069;">
             </label>
-            <button id="depositBtn" type="button">增加金额</button>
-            <button id="saveSettingsBtn" type="button">保存初始资金</button>
+            <button id="depositBtn" type="button">&#22686;&#21152;&#37329;&#39069;</button>
+            <button id="saveSettingsBtn" type="button">&#20445;&#23384;&#21021;&#22987;&#36164;&#37329;</button>
           </div>
         </section>
 
-        <aside class="trade-panel" aria-label="交易面板">
+        <aside class="trade-panel" aria-label="trade panel">
           <div class="panel-head">
-            <h2>下单</h2>
-            <div class="segmented" role="group" aria-label="买卖方向">
-              <button id="buyTab" class="active" type="button">买入</button>
-              <button id="sellTab" type="button">卖出</button>
+            <h2>&#19979;&#21333;</h2>
+            <div class="segmented" role="group" aria-label="side">
+              <button id="buyTab" class="active" type="button">&#20080;&#20837;</button>
+              <button id="sellTab" type="button">&#21334;&#20986;</button>
             </div>
           </div>
           <label>
-            数量
+            &#25968;&#37327;
             <input id="quantityInput" type="number" min="1" step="1" value="10">
           </label>
           <label>
-            订单金额
-            <input id="notionalInput" type="number" min="1" step="100" placeholder="按金额下单">
+            &#35746;&#21333;&#37329;&#39069;
+            <input id="notionalInput" type="number" min="1" step="100" placeholder="&#25353;&#37329;&#39069;&#19979;&#21333;">
           </label>
-          <button id="tradeBtn" class="primary-action" type="button">买入</button>
-          <p id="tradeHint" class="trade-hint">按当前真实最新价模拟成交。</p>
+          <button id="tradeBtn" class="primary-action" type="button">&#20080;&#20837;</button>
+          <p id="tradeHint" class="trade-hint">&#25353;&#24403;&#21069;&#30495;&#23454;&#26368;&#26032;&#20215;&#27169;&#25311;&#25104;&#20132;&#12290;</p>
 
           <div class="subsection">
-            <h3>持仓</h3>
-            <div id="positions" class="positions empty">暂无持仓</div>
+            <h3>&#25345;&#20179;</h3>
+            <div id="positions" class="positions empty">&#26242;&#26080;&#25345;&#20179;</div>
           </div>
         </aside>
       </section>
 
       <section class="history-panel">
         <div class="panel-head">
-          <h2>交易记录</h2>
-          <button id="clearHistoryBtn" class="ghost-btn" type="button">清空记录</button>
+          <h2>&#20132;&#26131;&#35760;&#24405;</h2>
+          <button id="clearHistoryBtn" class="ghost-btn" type="button">&#28165;&#31354;&#35760;&#24405;</button>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>时间</th>
-                <th>股票</th>
-                <th>方向</th>
-                <th>数量</th>
-                <th>价格</th>
-                <th>金额</th>
+                <th>&#26102;&#38388;</th>
+                <th>&#32929;&#31080;</th>
+                <th>&#26041;&#21521;</th>
+                <th>&#25968;&#37327;</th>
+                <th>&#20215;&#26684;</th>
+                <th>&#37329;&#39069;</th>
               </tr>
             </thead>
             <tbody id="historyBody"></tbody>
@@ -141,6 +163,6 @@
       </section>
     </main>
 
-    <script src="app.js?v=20260528"></script>
+    <script src="app.js?v=20260602c"></script>
   </body>
 </html>
