@@ -68,3 +68,5 @@ http://127.0.0.1:8765/
 ```
 
 `/api/health` 返回 `database: true` 才表示数据库已连接。
+
+Last updated: equity history and statistics deployment trigger.
