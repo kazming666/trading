@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>模拟股票交易台</title>
+    <link rel="stylesheet" href="styles.css?v=20260528">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">Paper Trading Desk</p>
+          <h1>模拟股票交易台</h1>
+        </div>
+        <div class="status-strip">
+          <span id="feedStatus" class="pill">连接行情</span>
+          <span id="clock" class="clock">--:--:--</span>
+        </div>
+      </section>
+
+      <section class="metrics-grid" aria-label="账户概览">
+        <div class="metric">
+          <span>账户权益</span>
+          <strong id="equityValue">$0.00</strong>
+        </div>
+        <div class="metric">
+          <span>可用现金</span>
+          <strong id="cashValue">$0.00</strong>
+        </div>
+        <div class="metric">
+          <span>持仓市值</span>
+          <strong id="positionValue">$0.00</strong>
+        </div>
+        <div class="metric">
+          <span>总盈亏</span>
+          <strong id="pnlValue">$0.00</strong>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="watchlist-panel" aria-label="股票列表">
+          <div class="panel-head">
+            <h2>自选</h2>
+            <button id="resetBtn" class="icon-btn" type="button" title="重置账户">↺</button>
+          </div>
+          <div class="symbol-entry">
+            <input id="symbolInput" type="text" autocomplete="off" placeholder="AAPL / 600519 / 00700">
+            <button id="addSymbolBtn" type="button">添加</button>
+          </div>
+          <p class="mini-note">A 股可输入 600519、000001，港股可输入 00700，美股输入 AAPL。</p>
+          <div id="watchlist" class="watchlist"></div>
+        </aside>
+
+        <section class="market-panel" aria-label="行情面板">
+          <div class="panel-head market-head">
+            <div>
+              <h2 id="activeSymbol">AAPL</h2>
+              <p id="activeName">Apple Inc.</p>
+            </div>
+            <div class="quote-box">
+              <strong id="activePrice">$0.00</strong>
+              <span id="activeMove">$0.00 0.00%</span>
+            </div>
+          </div>
+
+          <div class="range-tabs" role="group" aria-label="走势图周期">
+            <button class="active" type="button" data-range="1d">1天</button>
+            <button type="button" data-range="1wk">1周</button>
+            <button type="button" data-range="1mo">1个月</button>
+            <button type="button" data-range="3mo">3个月</button>
+            <button type="button" data-range="6mo">6个月</button>
+            <button type="button" data-range="1y">1年</button>
+          </div>
+
+          <div class="chart-wrap">
+            <canvas id="priceChart" width="900" height="340" aria-label="价格走势"></canvas>
+            <div id="chartTooltip" class="chart-tooltip" hidden></div>
+          </div>
+
+          <div class="config-row">
+            <label>
+              初始模拟资金
+              <input id="startingCashInput" type="number" min="100" step="100" value="100000">
+            </label>
+            <label>
+              增加入金
+              <input id="depositInput" type="number" min="1" step="100" placeholder="输入金额">
+            </label>
+            <button id="depositBtn" type="button">增加金额</button>
+            <button id="saveSettingsBtn" type="button">保存初始资金</button>
+          </div>
+        </section>
+
+        <aside class="trade-panel" aria-label="交易面板">
+          <div class="panel-head">
+            <h2>下单</h2>
+            <div class="segmented" role="group" aria-label="买卖方向">
+              <button id="buyTab" class="active" type="button">买入</button>
+              <button id="sellTab" type="button">卖出</button>
+            </div>
+          </div>
+          <label>
+            数量
+            <input id="quantityInput" type="number" min="1" step="1" value="10">
+          </label>
+          <label>
+            订单金额
+            <input id="notionalInput" type="number" min="1" step="100" placeholder="按金额下单">
+          </label>
+          <button id="tradeBtn" class="primary-action" type="button">买入</button>
+          <p id="tradeHint" class="trade-hint">按当前真实最新价模拟成交。</p>
+
+          <div class="subsection">
+            <h3>持仓</h3>
+            <div id="positions" class="positions empty">暂无持仓</div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="history-panel">
+        <div class="panel-head">
+          <h2>交易记录</h2>
+          <button id="clearHistoryBtn" class="ghost-btn" type="button">清空记录</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>股票</th>
+                <th>方向</th>
+                <th>数量</th>
+                <th>价格</th>
+                <th>金额</th>
+              </tr>
+            </thead>
+            <tbody id="historyBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js?v=20260528"></script>
+  </body>
+</html>

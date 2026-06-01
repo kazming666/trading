@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: paper-trading-desk
+    runtime: python
+    plan: free
+    buildCommand: ""
+    startCommand: "HOST=0.0.0.0 python server.py"
