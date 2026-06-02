@@ -326,23 +326,33 @@ label,
   gap: 10px;
 }
 
-.backtest-metrics div {
+.backtest-metrics div,
+.optimizer-grid div {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
   background: #ffffff;
 }
 
-.backtest-metrics span {
+.backtest-metrics span,
+.optimizer-grid span {
   display: block;
   color: var(--muted);
   font-size: 12px;
 }
 
-.backtest-metrics strong {
+.backtest-metrics strong,
+.optimizer-grid strong {
   display: block;
   margin-top: 5px;
   font-size: 18px;
+}
+
+.optimizer-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .backtest-chart-wrap {
@@ -687,6 +697,10 @@ table {
   min-width: 980px;
 }
 
+.optimizer-table {
+  min-width: 900px;
+}
+
 .trading-stock-table tbody tr {
   cursor: pointer;
 }
@@ -771,7 +785,8 @@ td:nth-child(3) {
   }
 
   .strategy-param-panel,
-  .backtest-metrics {
+  .backtest-metrics,
+  .optimizer-grid {
     grid-template-columns: 1fr;
   }
 

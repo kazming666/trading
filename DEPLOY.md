@@ -103,12 +103,29 @@ It does not touch the user's live simulated trading account balance or holdings.
 - total return
 - annualized return
 - maximum drawdown
+- Sharpe ratio
 - win rate
 - trade count
 - average profit
 - average loss
 
 New runs are saved in `backtest_results`; older `backtest_history` rows remain visible in rankings for compatibility. The latest run returns an equity curve and trade list to the browser, and the page draws the curve with Chart.js zoom/pan support. The ranking table sorts saved backtests by return percentage.
+
+## Parameter Optimizer
+
+The Signals page includes an optimizer that reuses the same backtest engine and automatically runs parameter combinations. For Moving Average it tests:
+
+- Fast MA: `5`, `10`, `15`
+- Slow MA: `20`, `30`, `50`
+
+The optimizer returns:
+
+- highest return
+- smallest maximum drawdown
+- highest Sharpe ratio
+- Top 20 combinations sorted by return
+
+RSI and MACD also include default optimization grids. Optimizer runs are analytical only; they do not place simulated orders and do not change the user's paper account.
 
 ## Render Settings
 

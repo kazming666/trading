@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 import threading
@@ -194,6 +195,68 @@ def calculate_max_drawdown(equity_values):
     return max_drawdown
 
 
+def calculate_sharpe_ratio(equity_curve):
+    returns = []
+    previous = None
+    for point in equity_curve:
+        equity = float(point["equity"])
+        if previous and previous > 0:
+            returns.append((equity - previous) / previous)
+        previous = equity
+    if len(returns) < 2:
+        return 0
+    mean_return = sum(returns) / len(returns)
+    variance = sum((value - mean_return) ** 2 for value in returns) / (len(returns) - 1)
+    std_dev = math.sqrt(variance)
+    if std_dev == 0:
+        return 0
+    return (mean_return / std_dev) * math.sqrt(252)
+
+
+def optimizer_grid(strategy_name, base_params):
+    frequency_bars = int(base_params.get("frequencyBars") or 1)
+    if strategy_name == "moving_average":
+        return [
+            {"fastMa": fast, "slowMa": slow, "frequencyBars": frequency_bars}
+            for fast in [5, 10, 15]
+            for slow in [20, 30, 50]
+            if fast < slow
+        ]
+    if strategy_name == "rsi":
+        return [
+            {"period": period, "oversold": oversold, "overbought": overbought, "frequencyBars": frequency_bars}
+            for period in [7, 14, 21]
+            for oversold in [25, 30, 35]
+            for overbought in [65, 70, 75]
+            if oversold < overbought
+        ]
+    if strategy_name == "macd":
+        return [
+            {"fast": fast, "slow": slow, "signal": signal, "frequencyBars": frequency_bars}
+            for fast in [8, 12, 15]
+            for slow in [21, 26, 35]
+            for signal in [5, 9]
+            if fast < slow
+        ]
+    return [base_params]
+
+
+def summarize_backtest_result(result):
+    return {
+        "strategy": result["strategy"],
+        "symbol": result["symbol"],
+        "params": result["params"],
+        "returnPct": result["returnPct"],
+        "annualReturnPct": result["annualReturnPct"],
+        "maxDrawdown": result["maxDrawdown"],
+        "winRate": result["winRate"],
+        "tradeCount": result["tradeCount"],
+        "avgProfit": result["avgProfit"],
+        "avgLoss": result["avgLoss"],
+        "sharpeRatio": result["sharpeRatio"],
+    }
+
+
 def run_strategy_backtest(strategy_name, symbol, points, params):
     starting_cash = 100000.0
     cash = starting_cash
@@ -257,6 +320,7 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
     days = max((end_time - start_time).total_seconds() / 86400, 1)
     annual_return = ((final_equity / starting_cash) ** (365 / days) - 1) * 100 if final_equity > 0 else -100
     max_drawdown = calculate_max_drawdown([point["equity"] for point in equity_curve])
+    sharpe_ratio = calculate_sharpe_ratio(equity_curve)
     trade_pnls = [trade["pnl"] for trade in trades]
     wins = [pnl for pnl in trade_pnls if pnl > 0]
     losses = [pnl for pnl in trade_pnls if pnl < 0]
@@ -271,6 +335,7 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
         "returnPct": return_pct,
         "annualReturnPct": annual_return,
         "maxDrawdown": max_drawdown,
+        "sharpeRatio": sharpe_ratio,
         "winRate": win_rate,
         "tradeCount": len(trades),
         "avgProfit": (sum(wins) / len(wins)) if wins else 0,
@@ -493,6 +558,7 @@ class Handler(SimpleHTTPRequestHandler):
         "/api/trade": "handle_trade",
         "/api/strategy/run": "handle_run_strategy",
         "/api/strategy/backtest": "handle_strategy_backtest",
+        "/api/strategy/optimize": "handle_strategy_optimize",
         "/api/history/clear": "handle_clear_history",
     }
     DELETE_ROUTES = {
@@ -836,6 +902,7 @@ class Handler(SimpleHTTPRequestHandler):
                             return_pct,
                             annual_return_pct,
                             max_drawdown,
+                            sharpe_ratio,
                             win_rate,
                             trade_count,
                             avg_profit,
@@ -855,6 +922,7 @@ class Handler(SimpleHTTPRequestHandler):
                             return_pct,
                             0 AS annual_return_pct,
                             max_drawdown,
+                            0 AS sharpe_ratio,
                             win_rate,
                             trade_count,
                             0 AS avg_profit,
@@ -979,6 +1047,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "returnPct": row["return_pct"],
                     "annualReturnPct": row["annual_return_pct"],
                     "maxDrawdown": row["max_drawdown"],
+                    "sharpeRatio": row["sharpe_ratio"],
                     "winRate": row["win_rate"],
                     "tradeCount": row["trade_count"],
                     "avgProfit": row["avg_profit"],
@@ -1061,6 +1130,7 @@ class Handler(SimpleHTTPRequestHandler):
                             return_pct,
                             annual_return_pct,
                             max_drawdown,
+                            sharpe_ratio,
                             win_rate,
                             trade_count,
                             avg_profit,
@@ -1080,6 +1150,7 @@ class Handler(SimpleHTTPRequestHandler):
                             return_pct,
                             0 AS annual_return_pct,
                             max_drawdown,
+                            0 AS sharpe_ratio,
                             win_rate,
                             trade_count,
                             0 AS avg_profit,
@@ -1108,6 +1179,7 @@ class Handler(SimpleHTTPRequestHandler):
                         "returnPct": row["return_pct"],
                         "annualReturnPct": row["annual_return_pct"],
                         "maxDrawdown": row["max_drawdown"],
+                        "sharpeRatio": row["sharpe_ratio"],
                         "winRate": row["win_rate"],
                         "tradeCount": row["trade_count"],
                         "avgProfit": row["avg_profit"],
@@ -1320,13 +1392,14 @@ class Handler(SimpleHTTPRequestHandler):
                             return_pct,
                             annual_return_pct,
                             max_drawdown,
+                            sharpe_ratio,
                             win_rate,
                             trade_count,
                             avg_profit,
                             avg_loss,
                             runtime_ms
                         )
-                    VALUES (%s, %s, %s, %s::jsonb, to_timestamp(%s), to_timestamp(%s), %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s::jsonb, to_timestamp(%s), to_timestamp(%s), %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, created_at
                     """,
                     (
@@ -1339,6 +1412,7 @@ class Handler(SimpleHTTPRequestHandler):
                         Decimal(str(result["returnPct"])),
                         Decimal(str(result["annualReturnPct"])),
                         Decimal(str(result["maxDrawdown"])),
+                        Decimal(str(result["sharpeRatio"])),
                         Decimal(str(result["winRate"])),
                         int(result["tradeCount"]),
                         Decimal(str(result["avgProfit"])),
@@ -1352,6 +1426,53 @@ class Handler(SimpleHTTPRequestHandler):
         result["createdAt"] = int(row["created_at"].timestamp() * 1000)
         result["runtimeMs"] = runtime_ms
         self.end_json(200, {"backtest": result, "state": self.load_state(user["id"])})
+
+    def handle_strategy_optimize(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        data = self.read_json()
+        symbol = normalize_market_symbol(data.get("symbol") or "")
+        strategy_name = (data.get("strategyName") or "moving_average").strip()
+        range_key = data.get("range") or "3mo"
+        base_params = clean_strategy_params(strategy_name, data.get("params") or {})
+        if not symbol:
+            self.end_json(400, {"error": "Missing symbol."})
+            return
+        if range_key not in BACKTEST_RANGES:
+            self.end_json(400, {"error": "Invalid backtest range."})
+            return
+        started = time.perf_counter()
+        try:
+            points = normalize_backtest_history(symbol, range_key)
+            results = [
+                summarize_backtest_result(run_strategy_backtest(strategy_name, symbol, points, params))
+                for params in optimizer_grid(strategy_name, base_params)
+            ]
+        except (HTTPError, URLError, TimeoutError, ValueError) as error:
+            self.end_json(502, {"error": f"Optimization failed: {error}"})
+            return
+        runtime_ms = int((time.perf_counter() - started) * 1000)
+        results.sort(key=lambda item: item["returnPct"], reverse=True)
+        best_return = results[0] if results else None
+        best_drawdown = min(results, key=lambda item: item["maxDrawdown"]) if results else None
+        best_sharpe = max(results, key=lambda item: item["sharpeRatio"]) if results else None
+        self.end_json(
+            200,
+            {
+                "optimization": {
+                    "strategy": strategy_name,
+                    "symbol": symbol,
+                    "range": range_key,
+                    "combinations": len(results),
+                    "runtimeMs": runtime_ms,
+                    "bestReturn": best_return,
+                    "bestDrawdown": best_drawdown,
+                    "bestSharpe": best_sharpe,
+                    "topResults": results[:20],
+                }
+            },
+        )
 
     def handle_trade(self, parsed):
         user = self.require_user()

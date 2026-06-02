@@ -50,6 +50,7 @@ const els = {
   backtestRangeSelect: document.querySelector("#backtestRangeSelect"),
   runStrategyBtn: document.querySelector("#runStrategyBtn"),
   backtestStrategyBtn: document.querySelector("#backtestStrategyBtn"),
+  optimizeStrategyBtn: document.querySelector("#optimizeStrategyBtn"),
   movingAverageParams: document.querySelector("#movingAverageParams"),
   rsiParams: document.querySelector("#rsiParams"),
   macdParams: document.querySelector("#macdParams"),
@@ -75,6 +76,10 @@ const els = {
   backtestEquityChart: document.querySelector("#backtestEquityChart"),
   backtestTradesBody: document.querySelector("#backtestTradesBody"),
   strategyRankingBody: document.querySelector("#strategyRankingBody"),
+  bestReturnParams: document.querySelector("#bestReturnParams"),
+  bestDrawdownParams: document.querySelector("#bestDrawdownParams"),
+  bestSharpeParams: document.querySelector("#bestSharpeParams"),
+  optimizerResultsBody: document.querySelector("#optimizerResultsBody"),
   tradingStockBody: document.querySelector("#tradingStockBody"),
   signalHistoryBody: document.querySelector("#signalHistoryBody"),
   positions: document.querySelector("#positions"),
@@ -151,6 +156,7 @@ let tradePage = 1;
 let equityChart;
 let backtestEquityChart;
 let latestBacktest = null;
+let latestOptimization = null;
 let activeEquityRange = "today";
 let activePage = "dashboard";
 
@@ -406,6 +412,7 @@ function render() {
   renderBacktestSummary(latestBacktest);
   renderBacktestChart(latestBacktest?.equityCurve || []);
   renderBacktestTrades(latestBacktest?.trades || []);
+  renderOptimizerResults(latestOptimization);
   renderEquityChart();
 }
 
@@ -1162,6 +1169,45 @@ function renderBacktestTrades(trades = []) {
   }).join("");
 }
 
+function fmtParams(params = {}) {
+  return Object.entries(params)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(", ");
+}
+
+function optimizerSummaryText(item, mode) {
+  if (!item) return "--";
+  const params = fmtParams(item.params);
+  if (mode === "drawdown") return `${params} | DD ${percentText(item.maxDrawdown)} | Return ${percentText(item.returnPct)}`;
+  if (mode === "sharpe") return `${params} | Sharpe ${Number(item.sharpeRatio || 0).toFixed(2)} | Return ${percentText(item.returnPct)}`;
+  return `${params} | Return ${percentText(item.returnPct)} | DD ${percentText(item.maxDrawdown)}`;
+}
+
+function renderOptimizerResults(optimization) {
+  if (!els.optimizerResultsBody) return;
+  els.bestReturnParams.textContent = optimizerSummaryText(optimization?.bestReturn, "return");
+  els.bestDrawdownParams.textContent = optimizerSummaryText(optimization?.bestDrawdown, "drawdown");
+  els.bestSharpeParams.textContent = optimizerSummaryText(optimization?.bestSharpe, "sharpe");
+  const rows = optimization?.topResults || [];
+  if (!rows.length) {
+    els.optimizerResultsBody.innerHTML = `<tr><td colspan="6">\u6682\u65e0\u4f18\u5316\u7ed3\u679c</td></tr>`;
+    return;
+  }
+  els.optimizerResultsBody.innerHTML = rows.map((row) => {
+    const returnPct = Number(row.returnPct || 0);
+    return `
+      <tr>
+        <td>${fmtParams(row.params)}</td>
+        <td class="${returnPct >= 0 ? "up" : "down"}">${percentText(returnPct)}</td>
+        <td>${percentText(row.maxDrawdown)}</td>
+        <td>${Number(row.sharpeRatio || 0).toFixed(2)}</td>
+        <td>${percentText(row.winRate)}</td>
+        <td>${number.format(row.tradeCount || 0)}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
 async function runStrategySignal() {
   if (!currentUser) {
     setHint(text.loginRequired);
@@ -1196,6 +1242,26 @@ async function runStrategyBacktest() {
     mergeServerState(data.state);
     latestBacktest = data.backtest;
     setHint(`Backtest saved: ${strategyName} ${symbol}, return ${percentText(data.backtest.returnPct)}.`);
+    render();
+  } catch (error) {
+    setHint(error.message);
+  }
+}
+
+async function optimizeStrategyParams() {
+  if (!currentUser) {
+    setHint(text.loginRequired);
+    return;
+  }
+  const strategyName = els.strategySelect.value;
+  const symbol = currentStrategySymbol();
+  const range = els.backtestRangeSelect.value;
+  const params = strategyParams();
+  setHint(`Optimizing ${strategyName} on ${symbol}...`);
+  try {
+    const data = await apiPost("/api/strategy/optimize", { strategyName, symbol, range, params });
+    latestOptimization = data.optimization;
+    setHint(`Optimization complete: ${latestOptimization.combinations} combinations in ${number.format(latestOptimization.runtimeMs || 0)} ms.`);
     render();
   } catch (error) {
     setHint(error.message);
@@ -1312,6 +1378,7 @@ els.clearHistoryBtn.addEventListener("click", clearHistory);
 els.exportTradesBtn.addEventListener("click", exportTrades);
 els.runStrategyBtn.addEventListener("click", runStrategySignal);
 els.backtestStrategyBtn.addEventListener("click", runStrategyBacktest);
+els.optimizeStrategyBtn.addEventListener("click", optimizeStrategyParams);
 els.strategySelect.addEventListener("change", renderStrategyControls);
 els.strategySymbolInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runStrategySignal();

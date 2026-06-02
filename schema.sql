@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS backtest_history (
     end_date TIMESTAMPTZ NOT NULL,
     return_pct NUMERIC(20, 8) NOT NULL DEFAULT 0,
     max_drawdown NUMERIC(20, 8) NOT NULL DEFAULT 0,
+    sharpe_ratio NUMERIC(20, 8) NOT NULL DEFAULT 0,
     win_rate NUMERIC(20, 8) NOT NULL DEFAULT 0,
     trade_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -167,6 +168,8 @@ CREATE TABLE IF NOT EXISTS backtest_results (
     runtime_ms INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS sharpe_ratio NUMERIC(20, 8) NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
