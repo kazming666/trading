@@ -215,20 +215,71 @@ def estimate_positions_value(conn, user_id):
     return total
 
 
-def record_equity_snapshot(conn, user_id, reason, related_trade_id=None):
+def portfolio_totals(conn, user_id):
     with conn.cursor() as cur:
-        cur.execute("SELECT cash_balance FROM accounts WHERE user_id = %s", (user_id,))
+        cur.execute("SELECT cash_balance, starting_cash FROM accounts WHERE user_id = %s", (user_id,))
         account = cur.fetchone()
-    equity = account["cash_balance"] + estimate_positions_value(conn, user_id)
+    positions_value = estimate_positions_value(conn, user_id)
+    equity = account["cash_balance"] + positions_value
+    return {
+        "cash": account["cash_balance"],
+        "starting_cash": account["starting_cash"],
+        "positions_value": positions_value,
+        "equity": equity,
+    }
+
+
+def record_daily_snapshot(conn, user_id, totals=None):
+    totals = totals or portfolio_totals(conn, user_id)
+    starting_cash = totals["starting_cash"] or Decimal("0")
+    total_pnl = totals["equity"] - starting_cash
+    return_rate = (total_pnl / starting_cash * Decimal("100")) if starting_cash > 0 else Decimal("0")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO daily_snapshots
+                (user_id, snapshot_date, equity, cash_balance, positions_value, total_pnl, return_rate)
+            VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, snapshot_date)
+            DO UPDATE SET
+                equity = EXCLUDED.equity,
+                cash_balance = EXCLUDED.cash_balance,
+                positions_value = EXCLUDED.positions_value,
+                total_pnl = EXCLUDED.total_pnl,
+                return_rate = EXCLUDED.return_rate,
+                updated_at = now()
+            """,
+            (
+                user_id,
+                totals["equity"],
+                totals["cash"],
+                totals["positions_value"],
+                total_pnl,
+                return_rate,
+            ),
+        )
+    return totals
+
+
+def record_equity_snapshot(conn, user_id, reason, related_trade_id=None):
+    totals = portfolio_totals(conn, user_id)
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO equity_history (user_id, equity, cash_balance, positions_value, reason, related_trade_id)
             VALUES (%s, %s, %s, %s, %s, %s)
             """,
-            (user_id, equity, account["cash_balance"], equity - account["cash_balance"], reason, related_trade_id),
+            (
+                user_id,
+                totals["equity"],
+                totals["cash"],
+                totals["positions_value"],
+                reason,
+                related_trade_id,
+            ),
         )
-    return equity
+    record_daily_snapshot(conn, user_id, totals)
+    return totals["equity"]
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -473,12 +524,13 @@ class Handler(SimpleHTTPRequestHandler):
                 account = cur.fetchone()
                 cur.execute("SELECT symbol FROM watchlist WHERE user_id = %s ORDER BY sort_order, symbol", (user_id,))
                 symbols = [row["symbol"] for row in cur.fetchall()]
-                cur.execute("SELECT symbol, qty, avg_price, currency FROM positions WHERE user_id = %s AND qty > 0 ORDER BY symbol", (user_id,))
+                cur.execute("SELECT symbol, qty, avg_price, currency, opened_at FROM positions WHERE user_id = %s AND qty > 0 ORDER BY symbol", (user_id,))
                 positions = cur.fetchall()
                 cur.execute(
                     """
                     SELECT id, order_id, symbol, side, qty, price, value, currency,
-                           account_balance_after, position_qty_after, realized_pnl, executed_at
+                           account_balance_after, position_qty_after, realized_pnl,
+                           equity_before, equity_after, equity_change, executed_at
                     FROM trades WHERE user_id = %s ORDER BY executed_at DESC LIMIT 500
                     """,
                     (user_id,),
@@ -505,6 +557,30 @@ class Handler(SimpleHTTPRequestHandler):
                     (user_id,),
                 )
                 equity_history = cur.fetchall()
+                if not equity_history:
+                    record_equity_snapshot(conn, user_id, "adjustment")
+                    cur.execute(
+                        """
+                        SELECT equity, cash_balance, positions_value, reason, created_at
+                        FROM equity_history
+                        WHERE user_id = %s
+                        ORDER BY created_at ASC
+                        LIMIT 1000
+                        """,
+                        (user_id,),
+                    )
+                    equity_history = cur.fetchall()
+                cur.execute(
+                    """
+                    SELECT snapshot_date, equity, cash_balance, positions_value, total_pnl, return_rate
+                    FROM daily_snapshots
+                    WHERE user_id = %s
+                    ORDER BY snapshot_date ASC
+                    LIMIT 1000
+                    """,
+                    (user_id,),
+                )
+                daily_snapshots = cur.fetchall()
                 cur.execute(
                     """
                     SELECT
@@ -530,7 +606,12 @@ class Handler(SimpleHTTPRequestHandler):
             "activeSymbol": account["active_symbol"],
             "symbols": symbols or DEFAULT_SYMBOLS,
             "positions": {
-                row["symbol"]: {"qty": row["qty"], "avgPrice": row["avg_price"], "currency": row["currency"]}
+                row["symbol"]: {
+                    "qty": row["qty"],
+                    "avgPrice": row["avg_price"],
+                    "currency": row["currency"],
+                    "openedAt": int(row["opened_at"].timestamp() * 1000) if row["opened_at"] else None,
+                }
                 for row in positions
             },
             "trades": [
@@ -547,6 +628,9 @@ class Handler(SimpleHTTPRequestHandler):
                     "accountBalanceAfter": row["account_balance_after"],
                     "positionQtyAfter": row["position_qty_after"],
                     "realizedPnl": row["realized_pnl"],
+                    "equityBefore": row["equity_before"],
+                    "equityAfter": row["equity_after"],
+                    "equityChange": row["equity_change"],
                 }
                 for row in trades
             ],
@@ -568,6 +652,17 @@ class Handler(SimpleHTTPRequestHandler):
                     "reason": row["reason"],
                 }
                 for row in equity_history
+            ],
+            "dailySnapshots": [
+                {
+                    "date": row["snapshot_date"].isoformat(),
+                    "equity": row["equity"],
+                    "cash": row["cash_balance"],
+                    "positionsValue": row["positions_value"],
+                    "totalPnl": row["total_pnl"],
+                    "returnRate": row["return_rate"],
+                }
+                for row in daily_snapshots
             ],
             "stats": {
                 "totalTrades": int(stats["total_trades"] or 0),
@@ -621,6 +716,7 @@ class Handler(SimpleHTTPRequestHandler):
                 cur.execute("DELETE FROM orders WHERE user_id = %s", (user["id"],))
                 cur.execute("DELETE FROM account_transactions WHERE user_id = %s", (user["id"],))
                 cur.execute("DELETE FROM equity_history WHERE user_id = %s", (user["id"],))
+                cur.execute("DELETE FROM daily_snapshots WHERE user_id = %s", (user["id"],))
                 record_equity_snapshot(conn, user["id"], "reset")
             conn.commit()
         self.end_json(200, {"state": self.load_state(user["id"])})
@@ -707,6 +803,7 @@ class Handler(SimpleHTTPRequestHandler):
                 position = cur.fetchone()
                 current_qty = position["qty"] if position else Decimal("0")
                 avg_price = position["avg_price"] if position else Decimal("0")
+                equity_before = account["cash_balance"] + estimate_positions_value(conn, user["id"])
                 realized_pnl = None
 
                 if side == "buy":
@@ -761,17 +858,28 @@ class Handler(SimpleHTTPRequestHandler):
                     (user["id"], order_id, symbol, side, qty, price, value, currency),
                 )
                 trade_id = cur.fetchone()["id"]
+                equity_after = record_equity_snapshot(conn, user["id"], "trade", trade_id)
                 cur.execute(
                     """
                     UPDATE trades
                     SET account_balance_after = %s,
                         position_qty_after = %s,
-                        realized_pnl = %s
+                        realized_pnl = %s,
+                        equity_before = %s,
+                        equity_after = %s,
+                        equity_change = %s
                     WHERE id = %s
                     """,
-                    (account_balance_after, position_qty_after, realized_pnl, trade_id),
+                    (
+                        account_balance_after,
+                        position_qty_after,
+                        realized_pnl,
+                        equity_before,
+                        equity_after,
+                        equity_after - equity_before,
+                        trade_id,
+                    ),
                 )
-                record_equity_snapshot(conn, user["id"], "trade", trade_id)
             conn.commit()
         self.end_json(200, {"state": self.load_state(user["id"]), "fill": {"symbol": symbol, "side": side, "qty": qty, "price": price, "value": value, "currency": currency}})
 

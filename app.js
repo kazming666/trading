@@ -47,10 +47,12 @@ const els = {
   clearHistoryBtn: document.querySelector("#clearHistoryBtn"),
   resetBtn: document.querySelector("#resetBtn"),
   rangeTabs: document.querySelector(".range-tabs"),
+  equityRangeTabs: document.querySelector(".equity-range-tabs"),
   equityChart: document.querySelector("#equityChart"),
   prevPageBtn: document.querySelector("#prevPageBtn"),
   nextPageBtn: document.querySelector("#nextPageBtn"),
   pageInfo: document.querySelector("#pageInfo"),
+  exportTradesBtn: document.querySelector("#exportTradesBtn"),
   statTotalTrades: document.querySelector("#statTotalTrades"),
   statWinRate: document.querySelector("#statWinRate"),
   statMaxProfit: document.querySelector("#statMaxProfit"),
@@ -109,6 +111,7 @@ let pollTimer;
 let clockTimer;
 let tradePage = 1;
 let equityChart;
+let activeEquityRange = "today";
 
 function emptyState() {
   return {
@@ -123,6 +126,7 @@ function emptyState() {
     trades: [],
     deposits: [],
     equityHistory: [],
+    dailySnapshots: [],
     stats: {
       totalTrades: 0,
       winRate: 0,
@@ -144,6 +148,55 @@ function currencyFormatter(currency = "USD") {
 
 function fmtMoney(value, currency = "USD") {
   return currencyFormatter(currency).format(Number(value) || 0);
+}
+
+function fmtDateTime(value) {
+  if (!value) return "--";
+  return new Date(value).toLocaleString("zh-CN", { hour12: false });
+}
+
+function fmtDate(value) {
+  if (!value) return "--";
+  return new Date(value).toLocaleDateString("zh-CN");
+}
+
+function percentText(value) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return "--";
+  return `${numberValue.toFixed(2)}%`;
+}
+
+function startOfLocalDay(date = new Date()) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function startOfLocalWeek(date = new Date()) {
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = start.getDay() || 7;
+  start.setDate(start.getDate() - day + 1);
+  return start.getTime();
+}
+
+function equityRangeStart(range) {
+  const now = new Date();
+  if (range === "today") return startOfLocalDay(now);
+  if (range === "week") return startOfLocalWeek(now);
+  if (range === "month") return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  return 0;
+}
+
+function chartYAxisBounds(values) {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (!finite.length) return {};
+  const minValue = Math.min(...finite);
+  const maxValue = Math.max(...finite);
+  if (finite.length === 1 || minValue === maxValue) {
+    const base = Math.max(Math.abs(maxValue), 1);
+    const padding = Math.max(base * 0.01, 100);
+    return { min: maxValue - padding, max: maxValue + padding };
+  }
+  const padding = Math.max((maxValue - minValue) * 0.08, Math.abs(maxValue) * 0.002, 50);
+  return { min: minValue - padding, max: maxValue + padding };
 }
 
 async function apiRequest(path, options = {}) {
@@ -389,9 +442,18 @@ function renderStats() {
 
 function renderEquityChart() {
   if (!els.equityChart || !window.Chart) return;
-  const points = state.equityHistory || [];
-  const labels = points.map((point) => new Date(point.time).toLocaleString("zh-CN", { hour12: false }));
-  const values = points.map((point) => Number(point.equity));
+  const rangeStart = equityRangeStart(activeEquityRange);
+  const points = (state.equityHistory || [])
+    .filter((point) => Number(point.time) >= rangeStart)
+    .map((point) => ({ ...point, equity: Number(point.equity) }))
+    .filter((point) => Number.isFinite(point.equity));
+  const sourcePoints = points.length ? points : (state.equityHistory || [])
+    .map((point) => ({ ...point, equity: Number(point.equity) }))
+    .filter((point) => Number.isFinite(point.equity))
+    .slice(-1);
+  const labels = sourcePoints.map((point) => fmtDateTime(point.time));
+  const values = sourcePoints.map((point) => point.equity);
+  const yBounds = chartYAxisBounds(values);
   if (!equityChart) {
     equityChart = new Chart(els.equityChart, {
       type: "line",
@@ -420,7 +482,11 @@ function renderEquityChart() {
         },
         scales: {
           x: { ticks: { maxTicksLimit: 8 } },
-          y: { ticks: { callback: (value) => fmtMoney(value) } }
+          y: {
+            min: yBounds.min,
+            max: yBounds.max,
+            ticks: { callback: (value) => fmtMoney(value) }
+          }
         }
       }
     });
@@ -428,6 +494,8 @@ function renderEquityChart() {
   }
   equityChart.data.labels = labels;
   equityChart.data.datasets[0].data = values;
+  equityChart.options.scales.y.min = yBounds.min;
+  equityChart.options.scales.y.max = yBounds.max;
   equityChart.update();
 }
 
@@ -445,12 +513,20 @@ function renderPositions() {
     const currency = quote?.currency || pos.currency || "USD";
     const value = Number(pos.qty) * price;
     const pnl = (price - Number(pos.avgPrice)) * Number(pos.qty);
+    const invested = Number(pos.avgPrice) * Number(pos.qty);
+    const pnlRate = invested ? (pnl / invested) * 100 : 0;
+    const openedAt = Number(pos.openedAt);
+    const holdingDays = openedAt ? Math.max(1, Math.ceil((Date.now() - openedAt) / 86400000)) : "--";
     return `
       <div class="position-row">
         <div><strong>${symbol}</strong><span>${number.format(pos.qty)} ${text.shares}</span></div>
         <div><span>${text.avgPrice}</span><span>${fmtMoney(pos.avgPrice, currency)}</span></div>
+        <div><span>当前价格</span><span>${fmtMoney(price, currency)}</span></div>
         <div><span>${text.marketValue}</span><span>${fmtMoney(value, currency)}</span></div>
-        <div><span>${text.pnl}</span><span class="${pnl >= 0 ? "up" : "down"}">${fmtMoney(pnl, currency)}</span></div>
+        <div><span>浮动盈亏</span><span class="${pnl >= 0 ? "up" : "down"}">${fmtMoney(pnl, currency)}</span></div>
+        <div><span>浮动收益率</span><span class="${pnl >= 0 ? "up" : "down"}">${percentText(pnlRate)}</span></div>
+        <div><span>持仓天数</span><span>${holdingDays}</span></div>
+        <div><span>买入时间</span><span>${fmtDate(openedAt)}</span></div>
       </div>
     `;
   }).join("");
@@ -458,7 +534,7 @@ function renderPositions() {
 
 function renderHistory() {
   if (!state.trades.length && !state.deposits?.length) {
-    els.historyBody.innerHTML = `<tr><td colspan="9">${text.noHistory}</td></tr>`;
+    els.historyBody.innerHTML = `<tr><td colspan="12">${text.noHistory}</td></tr>`;
     els.pageInfo.textContent = "1 / 1";
     els.prevPageBtn.disabled = true;
     els.nextPageBtn.disabled = true;
@@ -475,7 +551,7 @@ function renderHistory() {
       return `
         <tr>
           <td>D-${item.id}</td>
-          <td>${new Date(item.time).toLocaleString("zh-CN", { hour12: false })}</td>
+          <td>${fmtDateTime(item.time)}</td>
           <td>${text.cash}</td>
           <td class="up">${text.deposit}</td>
           <td>--</td>
@@ -483,13 +559,17 @@ function renderHistory() {
           <td>${fmtMoney(item.amount)}</td>
           <td>--</td>
           <td>--</td>
+          <td>--</td>
+          <td>--</td>
+          <td>--</td>
         </tr>
       `;
     }
+    const equityChange = Number(item.equityChange || 0);
     return `
       <tr>
         <td>${item.id}</td>
-        <td>${new Date(item.time).toLocaleString("zh-CN", { hour12: false })}</td>
+        <td>${fmtDateTime(item.time)}</td>
         <td>${item.symbol}</td>
         <td class="${item.side === "buy" ? "up" : "down"}">${item.side === "buy" ? text.buy : text.sell}</td>
         <td>${number.format(item.qty)}</td>
@@ -497,6 +577,9 @@ function renderHistory() {
         <td>${fmtMoney(item.value, item.currency)}</td>
         <td>${item.accountBalanceAfter == null ? "--" : fmtMoney(item.accountBalanceAfter)}</td>
         <td>${item.positionQtyAfter == null ? "--" : number.format(item.positionQtyAfter)}</td>
+        <td>${item.equityBefore == null ? "--" : fmtMoney(item.equityBefore)}</td>
+        <td>${item.equityAfter == null ? "--" : fmtMoney(item.equityAfter)}</td>
+        <td class="${equityChange >= 0 ? "up" : "down"}">${item.equityChange == null ? "--" : fmtMoney(item.equityChange)}</td>
       </tr>
     `;
   }).join("");
@@ -736,6 +819,36 @@ async function clearHistory() {
   }
 }
 
+function csvCell(value) {
+  const textValue = String(value ?? "");
+  return `"${textValue.replace(/"/g, '""')}"`;
+}
+
+function exportTrades() {
+  const rows = [
+    ["时间", "股票", "买卖方向", "数量", "价格", "金额", "成交后余额"],
+    ...state.trades.map((trade) => [
+      fmtDateTime(trade.time),
+      trade.symbol,
+      trade.side === "buy" ? text.buy : text.sell,
+      Number(trade.qty),
+      Number(trade.price),
+      Number(trade.value),
+      trade.accountBalanceAfter == null ? "" : Number(trade.accountBalanceAfter)
+    ])
+  ];
+  const csv = `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `trades-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 els.loginBtn.addEventListener("click", () => loginOrRegister("login"));
 els.registerBtn.addEventListener("click", () => loginOrRegister("register"));
 els.logoutBtn.addEventListener("click", logout);
@@ -768,6 +881,13 @@ els.rangeTabs.addEventListener("click", async (event) => {
   renderMarket();
   await loadActiveHistory();
 });
+els.equityRangeTabs.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-equity-range]");
+  if (!button) return;
+  activeEquityRange = button.dataset.equityRange;
+  els.equityRangeTabs.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
+  renderEquityChart();
+});
 els.addSymbolBtn.addEventListener("click", addSymbol);
 els.symbolInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") addSymbol();
@@ -782,6 +902,7 @@ els.depositInput.addEventListener("keydown", (event) => {
 });
 els.resetBtn.addEventListener("click", resetAccount);
 els.clearHistoryBtn.addEventListener("click", clearHistory);
+els.exportTradesBtn.addEventListener("click", exportTrades);
 els.prevPageBtn.addEventListener("click", () => {
   tradePage = Math.max(1, tradePage - 1);
   renderHistory();

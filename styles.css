@@ -47,7 +47,9 @@ button {
 .status-strip,
 .symbol-entry,
 .segmented,
-.range-tabs {
+.range-tabs,
+.equity-range-tabs,
+.panel-actions {
   display: flex;
   align-items: center;
 }
@@ -208,6 +210,12 @@ label,
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.panel-actions {
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .icon-btn,
@@ -385,13 +393,15 @@ input:focus {
   margin-top: 3px;
 }
 
-.range-tabs {
+.range-tabs,
+.equity-range-tabs {
   gap: 6px;
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
 
-.range-tabs button {
+.range-tabs button,
+.equity-range-tabs button {
   border: 1px solid var(--line);
   background: #f8faf7;
   border-radius: 999px;
@@ -401,7 +411,8 @@ input:focus {
   font-weight: 700;
 }
 
-.range-tabs button.active {
+.range-tabs button.active,
+.equity-range-tabs button.active {
   background: var(--blue);
   border-color: var(--blue);
   color: #ffffff;
@@ -509,7 +520,7 @@ input:focus {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 1040px;
+  min-width: 1380px;
 }
 
 th,

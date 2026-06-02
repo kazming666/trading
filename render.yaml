@@ -1,8 +1,0 @@
-services:
-  - type: web
-    name: paper-trading-desk
-    runtime: python
-    plan: free
-    healthCheckPath: /api/health
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "HOST=0.0.0.0 python server.py"

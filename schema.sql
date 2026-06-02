@@ -40,10 +40,13 @@ CREATE TABLE IF NOT EXISTS positions (
     qty NUMERIC(20, 8) NOT NULL CHECK (qty >= 0),
     avg_price NUMERIC(20, 8) NOT NULL CHECK (avg_price >= 0),
     currency TEXT NOT NULL DEFAULT 'USD',
+    opened_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (user_id, symbol)
 );
+
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 CREATE TABLE IF NOT EXISTS orders (
     id BIGSERIAL PRIMARY KEY,
@@ -74,12 +77,18 @@ CREATE TABLE IF NOT EXISTS trades (
     account_balance_after NUMERIC(20, 8),
     position_qty_after NUMERIC(20, 8),
     realized_pnl NUMERIC(20, 8),
+    equity_before NUMERIC(20, 8),
+    equity_after NUMERIC(20, 8),
+    equity_change NUMERIC(20, 8),
     executed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS account_balance_after NUMERIC(20, 8);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS position_qty_after NUMERIC(20, 8);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC(20, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS equity_before NUMERIC(20, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS equity_after NUMERIC(20, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS equity_change NUMERIC(20, 8);
 
 CREATE TABLE IF NOT EXISTS account_transactions (
     id BIGSERIAL PRIMARY KEY,
@@ -101,9 +110,24 @@ CREATE TABLE IF NOT EXISTS equity_history (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS daily_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    snapshot_date DATE NOT NULL,
+    equity NUMERIC(20, 8) NOT NULL,
+    cash_balance NUMERIC(20, 8) NOT NULL,
+    positions_value NUMERIC(20, 8) NOT NULL,
+    total_pnl NUMERIC(20, 8) NOT NULL,
+    return_rate NUMERIC(20, 8) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, snapshot_date)
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_trades_user_executed ON trades(user_id, executed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_user_created ON account_transactions(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_equity_history_user_created ON equity_history(user_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_daily_snapshots_user_date ON daily_snapshots(user_id, snapshot_date ASC);
