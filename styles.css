@@ -247,6 +247,10 @@ label,
   grid-template-columns: 280px minmax(0, 1fr) 320px;
 }
 
+.trading-list-panel {
+  grid-column: 1 / -1;
+}
+
 .settings-grid {
   grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
 }
@@ -583,6 +587,19 @@ table {
   width: 100%;
   border-collapse: collapse;
   min-width: 1380px;
+}
+
+.compact-table-wrap table {
+  min-width: 980px;
+}
+
+.trading-stock-table tbody tr {
+  cursor: pointer;
+}
+
+.trading-stock-table tbody tr:hover,
+.trading-stock-table tbody tr.active-row {
+  background: #eef5ff;
 }
 
 th,

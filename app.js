@@ -44,6 +44,7 @@ const els = {
   notionalInput: document.querySelector("#notionalInput"),
   tradeBtn: document.querySelector("#tradeBtn"),
   tradeHint: document.querySelector("#tradeHint"),
+  tradingStockBody: document.querySelector("#tradingStockBody"),
   positions: document.querySelector("#positions"),
   historyBody: document.querySelector("#historyBody"),
   clearHistoryBtn: document.querySelector("#clearHistoryBtn"),
@@ -360,6 +361,7 @@ function render() {
   renderMarket();
   renderAccount();
   renderStats();
+  renderTradingStocks();
   renderPositions();
   renderHistory();
   renderEquityChart();
@@ -467,47 +469,71 @@ function renderEquityChart() {
   const rangeStart = equityRangeStart(activeEquityRange);
   const points = (state.equityHistory || [])
     .filter((point) => Number(point.time) >= rangeStart)
-    .map((point) => ({ ...point, equity: Number(point.equity) }))
+    .map((point) => ({ ...point, equity: Number(point.equity), returnRate: Number(point.returnRate) }))
     .filter((point) => Number.isFinite(point.equity));
   const sourcePoints = points.length ? points : (state.equityHistory || [])
-    .map((point) => ({ ...point, equity: Number(point.equity) }))
+    .map((point) => ({ ...point, equity: Number(point.equity), returnRate: Number(point.returnRate) }))
     .filter((point) => Number.isFinite(point.equity))
     .slice(-1);
   const labels = sourcePoints.map((point) => fmtDateTime(point.time));
   const values = sourcePoints.map((point) => point.equity);
+  const returnValues = sourcePoints.map((point) => Number.isFinite(point.returnRate) ? point.returnRate : 0);
   const yBounds = chartYAxisBounds(values);
   if (!equityChart) {
     equityChart = new Chart(els.equityChart, {
       type: "line",
       data: {
         labels,
-        datasets: [{
-          label: "\u8d26\u6237\u603b\u8d44\u4ea7",
-          data: values,
-          borderColor: "#2867b2",
-          backgroundColor: "rgba(40, 103, 178, 0.12)",
-          fill: true,
-          tension: 0.25,
-          pointRadius: 2
-        }]
+        datasets: [
+          {
+            label: "\u603b\u8d44\u4ea7",
+            data: values,
+            borderColor: "#2867b2",
+            backgroundColor: "rgba(40, 103, 178, 0.12)",
+            yAxisID: "equity",
+            fill: true,
+            tension: 0.25,
+            pointRadius: 2
+          },
+          {
+            label: "\u7d2f\u8ba1\u6536\u76ca\u7387",
+            data: returnValues,
+            borderColor: "#b7791f",
+            backgroundColor: "rgba(183, 121, 31, 0.08)",
+            yAxisID: "returnRate",
+            fill: false,
+            tension: 0.25,
+            pointRadius: 2
+          }
+        ]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { display: false },
+          legend: { display: true, labels: { boxWidth: 10, boxHeight: 10 } },
           tooltip: {
             callbacks: {
-              label: (item) => fmtMoney(item.parsed.y)
+              label: (item) => item.dataset.yAxisID === "returnRate"
+                ? `${item.dataset.label}: ${Number(item.parsed.y).toFixed(2)}%`
+                : `${item.dataset.label}: ${fmtMoney(item.parsed.y)}`
             }
           }
         },
         scales: {
           x: { ticks: { maxTicksLimit: 8 } },
-          y: {
+          equity: {
+            type: "linear",
+            position: "left",
             min: yBounds.min,
             max: yBounds.max,
             ticks: { callback: (value) => fmtMoney(value) }
+          },
+          returnRate: {
+            type: "linear",
+            position: "right",
+            grid: { drawOnChartArea: false },
+            ticks: { callback: (value) => `${Number(value).toFixed(1)}%` }
           }
         }
       }
@@ -516,9 +542,52 @@ function renderEquityChart() {
   }
   equityChart.data.labels = labels;
   equityChart.data.datasets[0].data = values;
-  equityChart.options.scales.y.min = yBounds.min;
-  equityChart.options.scales.y.max = yBounds.max;
+  equityChart.data.datasets[1].data = returnValues;
+  equityChart.options.scales.equity.min = yBounds.min;
+  equityChart.options.scales.equity.max = yBounds.max;
   equityChart.update();
+}
+
+function positionMetrics(symbol) {
+  const pos = state.positions[symbol] || {};
+  const quote = state.quotes[symbol];
+  const qty = Number(pos.qty || 0);
+  const avgPrice = Number(pos.avgPrice || 0);
+  const price = quote?.price || avgPrice || 0;
+  const currency = quote?.currency || pos.currency || "USD";
+  const marketValue = qty * price;
+  const pnl = qty ? (price - avgPrice) * qty : 0;
+  const invested = qty * avgPrice;
+  const returnRate = invested ? (pnl / invested) * 100 : 0;
+  const openedAt = Number(pos.openedAt);
+  const holdingDays = qty && openedAt ? Math.max(1, Math.ceil((Date.now() - openedAt) / 86400000)) : "--";
+  return { pos, quote, qty, avgPrice, price, currency, marketValue, pnl, returnRate, holdingDays };
+}
+
+function renderTradingStocks() {
+  if (!els.tradingStockBody) return;
+  if (!state.symbols.length) {
+    els.tradingStockBody.innerHTML = `<tr><td colspan="9">${text.waitQuote}</td></tr>`;
+    return;
+  }
+  els.tradingStockBody.innerHTML = state.symbols.map((symbol) => {
+    const metrics = positionMetrics(symbol);
+    const name = metrics.quote?.name || symbol;
+    const rowClass = symbol === state.activeSymbol ? "active-row" : "";
+    return `
+      <tr class="${rowClass}" data-symbol="${symbol}">
+        <td><strong>${symbol}</strong></td>
+        <td>${name}</td>
+        <td>${metrics.qty ? number.format(metrics.qty) : "--"}</td>
+        <td>${metrics.avgPrice ? fmtMoney(metrics.avgPrice, metrics.currency) : "--"}</td>
+        <td>${metrics.price ? fmtMoney(metrics.price, metrics.currency) : "--"}</td>
+        <td>${metrics.qty ? fmtMoney(metrics.marketValue, metrics.currency) : "--"}</td>
+        <td class="${metrics.pnl >= 0 ? "up" : "down"}">${metrics.qty ? fmtMoney(metrics.pnl, metrics.currency) : "--"}</td>
+        <td class="${metrics.pnl >= 0 ? "up" : "down"}">${metrics.qty ? percentText(metrics.returnRate) : "--"}</td>
+        <td>${metrics.holdingDays}</td>
+      </tr>
+    `;
+  }).join("");
 }
 
 function renderPositions() {
@@ -929,6 +998,10 @@ els.watchlist.addEventListener("keydown", (event) => {
     const row = event.target.closest(".symbol-row");
     if (row) setActiveSymbol(row.dataset.symbol);
   }
+});
+els.tradingStockBody.addEventListener("click", (event) => {
+  const row = event.target.closest("tr[data-symbol]");
+  if (row) setActiveSymbol(row.dataset.symbol);
 });
 els.rangeTabs.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-range]");

@@ -12,6 +12,7 @@ import hmac
 import json
 import os
 import secrets
+import threading
 import time
 
 try:
@@ -281,6 +282,38 @@ def record_equity_snapshot(conn, user_id, reason, related_trade_id=None):
         )
     record_daily_snapshot(conn, user_id, totals)
     return totals["equity"]
+
+
+def record_all_equity_snapshots():
+    if not db_ready():
+        return
+    try:
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM accounts ORDER BY user_id")
+                user_ids = [row["user_id"] for row in cur.fetchall()]
+            for user_id in user_ids:
+                try:
+                    record_equity_snapshot(conn, user_id, "adjustment")
+                    conn.commit()
+                except Exception as error:
+                    conn.rollback()
+                    print(f"Warning: equity snapshot failed for user {user_id}: {error}")
+    except Exception as error:
+        print(f"Warning: equity snapshot worker failed: {error}")
+
+
+def start_equity_snapshot_worker():
+    if not db_ready():
+        return
+
+    def run():
+        while True:
+            record_all_equity_snapshots()
+            time.sleep(60)
+
+    thread = threading.Thread(target=run, name="equity-snapshot-worker", daemon=True)
+    thread.start()
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -575,11 +608,24 @@ class Handler(SimpleHTTPRequestHandler):
                 deposits = cur.fetchall()
                 cur.execute(
                     """
+                    SELECT COALESCE(SUM(amount), 0) AS deposit_total
+                    FROM account_transactions
+                    WHERE user_id = %s AND type = 'deposit'
+                    """,
+                    (user_id,),
+                )
+                deposit_totals = cur.fetchone()
+                cur.execute(
+                    """
                     SELECT equity, cash_balance, positions_value, reason, created_at
-                    FROM equity_history
-                    WHERE user_id = %s
+                    FROM (
+                        SELECT equity, cash_balance, positions_value, reason, created_at
+                        FROM equity_history
+                        WHERE user_id = %s
+                        ORDER BY created_at DESC
+                        LIMIT 10000
+                    ) recent_equity_history
                     ORDER BY created_at ASC
-                    LIMIT 1000
                     """,
                     (user_id,),
                 )
@@ -592,7 +638,6 @@ class Handler(SimpleHTTPRequestHandler):
                         FROM equity_history
                         WHERE user_id = %s
                         ORDER BY created_at ASC
-                        LIMIT 1000
                         """,
                         (user_id,),
                     )
@@ -626,8 +671,11 @@ class Handler(SimpleHTTPRequestHandler):
                 stats = cur.fetchone()
         sell_count = int(stats["sell_count"] or 0)
         winning_sells = int(stats["winning_sells"] or 0)
+        starting_cash = account["starting_cash"] or Decimal("0")
+        deposits_total = deposit_totals["deposit_total"] or Decimal("0")
+        return_base = starting_cash + deposits_total
         return {
-            "startingCash": account["starting_cash"],
+            "startingCash": starting_cash,
             "cash": account["cash_balance"],
             "baseCurrency": account["base_currency"],
             "activeSymbol": account["active_symbol"],
@@ -676,6 +724,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "equity": row["equity"],
                     "cash": row["cash_balance"],
                     "positionsValue": row["positions_value"],
+                    "returnRate": ((row["equity"] - return_base) / return_base * Decimal("100")) if return_base > 0 else Decimal("0"),
                     "reason": row["reason"],
                 }
                 for row in equity_history
@@ -981,6 +1030,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     init_db()
+    start_equity_snapshot_worker()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Real-market paper trading server: http://{HOST}:{PORT}/")
     server.serve_forever()
