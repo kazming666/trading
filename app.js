@@ -55,12 +55,15 @@ const els = {
   macdParams: document.querySelector("#macdParams"),
   maFastInput: document.querySelector("#maFastInput"),
   maSlowInput: document.querySelector("#maSlowInput"),
+  strategyFrequencyInput: document.querySelector("#strategyFrequencyInput"),
   rsiPeriodInput: document.querySelector("#rsiPeriodInput"),
   rsiOversoldInput: document.querySelector("#rsiOversoldInput"),
   rsiOverboughtInput: document.querySelector("#rsiOverboughtInput"),
+  rsiFrequencyInput: document.querySelector("#rsiFrequencyInput"),
   macdFastInput: document.querySelector("#macdFastInput"),
   macdSlowInput: document.querySelector("#macdSlowInput"),
   macdSignalInput: document.querySelector("#macdSignalInput"),
+  macdFrequencyInput: document.querySelector("#macdFrequencyInput"),
   backtestReturn: document.querySelector("#backtestReturn"),
   backtestAnnualReturn: document.querySelector("#backtestAnnualReturn"),
   backtestDrawdown: document.querySelector("#backtestDrawdown"),
@@ -68,7 +71,9 @@ const els = {
   backtestTradeCount: document.querySelector("#backtestTradeCount"),
   backtestAvgProfit: document.querySelector("#backtestAvgProfit"),
   backtestAvgLoss: document.querySelector("#backtestAvgLoss"),
+  backtestRuntime: document.querySelector("#backtestRuntime"),
   backtestEquityChart: document.querySelector("#backtestEquityChart"),
+  backtestTradesBody: document.querySelector("#backtestTradesBody"),
   strategyRankingBody: document.querySelector("#strategyRankingBody"),
   tradingStockBody: document.querySelector("#tradingStockBody"),
   signalHistoryBody: document.querySelector("#signalHistoryBody"),
@@ -400,6 +405,7 @@ function render() {
   renderBacktestRanking();
   renderBacktestSummary(latestBacktest);
   renderBacktestChart(latestBacktest?.equityCurve || []);
+  renderBacktestTrades(latestBacktest?.trades || []);
   renderEquityChart();
 }
 
@@ -995,23 +1001,32 @@ function currentStrategySymbol() {
 
 function strategyParams() {
   const strategyName = els.strategySelect.value;
+  const frequencyInput = strategyName === "rsi"
+    ? els.rsiFrequencyInput
+    : strategyName === "macd"
+      ? els.macdFrequencyInput
+      : els.strategyFrequencyInput;
+  const frequencyBars = Math.max(1, Number(frequencyInput?.value || 1));
   if (strategyName === "moving_average") {
     return {
       fastMa: Number(els.maFastInput.value || 5),
-      slowMa: Number(els.maSlowInput.value || 20)
+      slowMa: Number(els.maSlowInput.value || 20),
+      frequencyBars
     };
   }
   if (strategyName === "rsi") {
     return {
       period: Number(els.rsiPeriodInput.value || 14),
       oversold: Number(els.rsiOversoldInput.value || 30),
-      overbought: Number(els.rsiOverboughtInput.value || 70)
+      overbought: Number(els.rsiOverboughtInput.value || 70),
+      frequencyBars
     };
   }
   return {
     fast: Number(els.macdFastInput.value || 12),
     slow: Number(els.macdSlowInput.value || 26),
-    signal: Number(els.macdSignalInput.value || 9)
+    signal: Number(els.macdSignalInput.value || 9),
+    frequencyBars
   };
 }
 
@@ -1045,6 +1060,7 @@ function renderBacktestSummary(result) {
   els.backtestAvgProfit.className = avgProfit >= 0 ? "up" : "down";
   els.backtestAvgLoss.textContent = hasResult ? fmtMoney(avgLoss) : "--";
   els.backtestAvgLoss.className = avgLoss >= 0 ? "up" : "down";
+  els.backtestRuntime.textContent = hasResult ? `${number.format(result.runtimeMs || 0)} ms` : "--";
 }
 
 function renderBacktestRanking() {
@@ -1121,6 +1137,29 @@ function renderBacktestChart(points = []) {
   backtestEquityChart.data.labels = labels;
   backtestEquityChart.data.datasets[0].data = values;
   backtestEquityChart.update();
+}
+
+function renderBacktestTrades(trades = []) {
+  if (!els.backtestTradesBody) return;
+  if (!trades.length) {
+    els.backtestTradesBody.innerHTML = `<tr><td colspan="7">\u6682\u65e0\u5b8c\u6574\u4e70\u5356\u4ea4\u6613</td></tr>`;
+    return;
+  }
+  els.backtestTradesBody.innerHTML = trades.map((trade) => {
+    const pnl = Number(trade.pnl || 0);
+    const returnPct = Number(trade.returnPct || 0);
+    return `
+      <tr>
+        <td>${fmtDateTime(trade.buyTime)}</td>
+        <td>${fmtDateTime(trade.sellTime)}</td>
+        <td>${fmtMoney(trade.buyPrice)}</td>
+        <td>${fmtMoney(trade.sellPrice)}</td>
+        <td>${number.format(trade.qty || 0)}</td>
+        <td class="${returnPct >= 0 ? "up" : "down"}">${percentText(returnPct)}</td>
+        <td class="${pnl >= 0 ? "up" : "down"}">${fmtMoney(pnl)}</td>
+      </tr>
+    `;
+  }).join("");
 }
 
 async function runStrategySignal() {

@@ -51,6 +51,7 @@ BACKTEST_RANGES = {
     "6mo": ("6mo", "1d"),
     "1y": ("1y", "1d"),
 }
+BACKTEST_SYMBOLS = {"AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD"}
 
 
 def fetch_json(url):
@@ -166,16 +167,19 @@ def clean_strategy_params(strategy_name, params):
         return max(minimum, min(maximum, value))
 
     if strategy_name == "moving_average":
-        return {"fastMa": as_int("fastMa", 5), "slowMa": as_int("slowMa", 20)}
+        cleaned = {"fastMa": as_int("fastMa", 5), "slowMa": as_int("slowMa", 20)}
     if strategy_name == "rsi":
-        return {
+        cleaned = {
             "period": as_int("period", 14),
             "oversold": as_float("oversold", 30),
             "overbought": as_float("overbought", 70),
         }
     if strategy_name == "macd":
-        return {"fast": as_int("fast", 12), "slow": as_int("slow", 26), "signal": as_int("signal", 9)}
-    return {}
+        cleaned = {"fast": as_int("fast", 12), "slow": as_int("slow", 26), "signal": as_int("signal", 9)}
+    if strategy_name not in {"moving_average", "rsi", "macd"}:
+        cleaned = {}
+    cleaned["frequencyBars"] = as_int("frequencyBars", 1, 1, 60)
+    return cleaned
 
 
 def calculate_max_drawdown(equity_values):
@@ -194,35 +198,53 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
     starting_cash = 100000.0
     cash = starting_cash
     qty = 0.0
-    entry_value = 0.0
-    closed_pnls = []
-    trade_count = 0
+    entry = None
+    trades = []
     equity_curve = []
+    frequency_bars = max(1, int(params.get("frequencyBars") or 1))
 
     for index, point in enumerate(points):
         price = float(point["p"])
         if price <= 0:
             continue
         history = points[: index + 1]
-        signal = strategy_engine.generate_signal(
-            strategy_name,
-            symbol,
-            {"symbol": symbol, "price": price, "history": history, "params": params},
-        )
+        signal = {"signal": "HOLD"}
+        if index % frequency_bars == 0:
+            signal = strategy_engine.generate_signal(
+                strategy_name,
+                symbol,
+                {"symbol": symbol, "price": price, "history": history, "params": params},
+            )
         if signal["signal"] == "BUY" and qty <= 0 and cash > 0:
             qty = cash / price
-            entry_value = cash
+            entry = {
+                "buyTime": point["t"],
+                "buyPrice": price,
+                "qty": qty,
+                "buyValue": cash,
+            }
             cash = 0.0
-            trade_count += 1
         elif signal["signal"] == "SELL" and qty > 0:
             exit_value = qty * price
+            buy_value = entry["buyValue"] if entry else qty * price
+            pnl = exit_value - buy_value
+            trade_return = (pnl / buy_value * 100) if buy_value else 0
+            trades.append(
+                {
+                    "buyTime": entry["buyTime"] if entry else point["t"],
+                    "sellTime": point["t"],
+                    "buyPrice": entry["buyPrice"] if entry else price,
+                    "sellPrice": price,
+                    "qty": qty,
+                    "returnPct": trade_return,
+                    "pnl": pnl,
+                }
+            )
             cash = exit_value
             qty = 0.0
-            closed_pnls.append(exit_value - entry_value)
-            entry_value = 0.0
-            trade_count += 1
+            entry = None
         equity = cash + qty * price
-        equity_curve.append({"time": point["t"], "equity": equity})
+        equity_curve.append({"time": point["t"], "equity": equity, "cash": cash, "positionValue": qty * price})
 
     if not equity_curve:
         raise ValueError("Backtest has no usable price points")
@@ -235,22 +257,26 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
     days = max((end_time - start_time).total_seconds() / 86400, 1)
     annual_return = ((final_equity / starting_cash) ** (365 / days) - 1) * 100 if final_equity > 0 else -100
     max_drawdown = calculate_max_drawdown([point["equity"] for point in equity_curve])
-    wins = [pnl for pnl in closed_pnls if pnl > 0]
-    losses = [pnl for pnl in closed_pnls if pnl < 0]
-    win_rate = len(wins) / len(closed_pnls) * 100 if closed_pnls else 0
+    trade_pnls = [trade["pnl"] for trade in trades]
+    wins = [pnl for pnl in trade_pnls if pnl > 0]
+    losses = [pnl for pnl in trade_pnls if pnl < 0]
+    win_rate = len(wins) / len(trades) * 100 if trades else 0
     return {
         "strategy": strategy_name,
         "symbol": symbol,
+        "initialCash": starting_cash,
+        "finalEquity": final_equity,
         "startDate": int(start_time.timestamp() * 1000),
         "endDate": int(end_time.timestamp() * 1000),
         "returnPct": return_pct,
         "annualReturnPct": annual_return,
         "maxDrawdown": max_drawdown,
         "winRate": win_rate,
-        "tradeCount": trade_count,
+        "tradeCount": len(trades),
         "avgProfit": (sum(wins) / len(wins)) if wins else 0,
         "avgLoss": (sum(losses) / len(losses)) if losses else 0,
         "equityCurve": equity_curve,
+        "trades": trades,
         "params": params,
     }
 
@@ -798,13 +824,50 @@ class Handler(SimpleHTTPRequestHandler):
                 signal_history = cur.fetchall()
                 cur.execute(
                     """
-                    SELECT id, strategy, symbol, start_date, end_date, return_pct, max_drawdown, win_rate, trade_count, created_at
-                    FROM backtest_history
-                    WHERE user_id = %s
+                    SELECT *
+                    FROM (
+                        SELECT
+                            id,
+                            strategy,
+                            symbol,
+                            params,
+                            start_time AS start_date,
+                            end_time AS end_date,
+                            return_pct,
+                            annual_return_pct,
+                            max_drawdown,
+                            win_rate,
+                            trade_count,
+                            avg_profit,
+                            avg_loss,
+                            runtime_ms,
+                            created_at
+                        FROM backtest_results
+                        WHERE user_id = %s
+                        UNION ALL
+                        SELECT
+                            id,
+                            strategy,
+                            symbol,
+                            '{}'::jsonb AS params,
+                            start_date,
+                            end_date,
+                            return_pct,
+                            0 AS annual_return_pct,
+                            max_drawdown,
+                            win_rate,
+                            trade_count,
+                            0 AS avg_profit,
+                            0 AS avg_loss,
+                            0 AS runtime_ms,
+                            created_at
+                        FROM backtest_history
+                        WHERE user_id = %s
+                    ) combined_backtests
                     ORDER BY created_at DESC
                     LIMIT 100
                     """,
-                    (user_id,),
+                    (user_id, user_id),
                 )
                 backtest_history = cur.fetchall()
                 cur.execute(
@@ -914,9 +977,14 @@ class Handler(SimpleHTTPRequestHandler):
                     "startDate": int(row["start_date"].timestamp() * 1000),
                     "endDate": int(row["end_date"].timestamp() * 1000),
                     "returnPct": row["return_pct"],
+                    "annualReturnPct": row["annual_return_pct"],
                     "maxDrawdown": row["max_drawdown"],
                     "winRate": row["win_rate"],
                     "tradeCount": row["trade_count"],
+                    "avgProfit": row["avg_profit"],
+                    "avgLoss": row["avg_loss"],
+                    "runtimeMs": row["runtime_ms"],
+                    "params": row["params"],
                     "time": int(row["created_at"].timestamp() * 1000),
                 }
                 for row in backtest_history
@@ -981,13 +1049,50 @@ class Handler(SimpleHTTPRequestHandler):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, strategy, symbol, start_date, end_date, return_pct, max_drawdown, win_rate, trade_count, created_at
-                    FROM backtest_history
-                    WHERE user_id = %s
+                    SELECT *
+                    FROM (
+                        SELECT
+                            id,
+                            strategy,
+                            symbol,
+                            params,
+                            start_time AS start_date,
+                            end_time AS end_date,
+                            return_pct,
+                            annual_return_pct,
+                            max_drawdown,
+                            win_rate,
+                            trade_count,
+                            avg_profit,
+                            avg_loss,
+                            runtime_ms,
+                            created_at
+                        FROM backtest_results
+                        WHERE user_id = %s
+                        UNION ALL
+                        SELECT
+                            id,
+                            strategy,
+                            symbol,
+                            '{}'::jsonb AS params,
+                            start_date,
+                            end_date,
+                            return_pct,
+                            0 AS annual_return_pct,
+                            max_drawdown,
+                            win_rate,
+                            trade_count,
+                            0 AS avg_profit,
+                            0 AS avg_loss,
+                            0 AS runtime_ms,
+                            created_at
+                        FROM backtest_history
+                        WHERE user_id = %s
+                    ) combined_backtests
                     ORDER BY created_at DESC
                     LIMIT 100
                     """,
-                    (user["id"],),
+                    (user["id"], user["id"]),
                 )
                 rows = cur.fetchall()
         self.end_json(
@@ -1001,9 +1106,14 @@ class Handler(SimpleHTTPRequestHandler):
                         "startDate": int(row["start_date"].timestamp() * 1000),
                         "endDate": int(row["end_date"].timestamp() * 1000),
                         "returnPct": row["return_pct"],
+                        "annualReturnPct": row["annual_return_pct"],
                         "maxDrawdown": row["max_drawdown"],
                         "winRate": row["win_rate"],
                         "tradeCount": row["trade_count"],
+                        "avgProfit": row["avg_profit"],
+                        "avgLoss": row["avg_loss"],
+                        "runtimeMs": row["runtime_ms"],
+                        "params": row["params"],
                         "time": int(row["created_at"].timestamp() * 1000),
                     }
                     for row in rows
@@ -1186,38 +1296,61 @@ class Handler(SimpleHTTPRequestHandler):
         if range_key not in BACKTEST_RANGES:
             self.end_json(400, {"error": "Invalid backtest range."})
             return
+        started = time.perf_counter()
         try:
             points = normalize_backtest_history(symbol, range_key)
             result = run_strategy_backtest(strategy_name, symbol, points, params)
         except (HTTPError, URLError, TimeoutError, ValueError) as error:
             self.end_json(502, {"error": f"Backtest failed: {error}"})
             return
+        runtime_ms = int((time.perf_counter() - started) * 1000)
 
         with db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO backtest_history
-                        (user_id, strategy, symbol, start_date, end_date, return_pct, max_drawdown, win_rate, trade_count)
-                    VALUES (%s, %s, %s, to_timestamp(%s), to_timestamp(%s), %s, %s, %s, %s)
+                    INSERT INTO backtest_results
+                        (
+                            user_id,
+                            symbol,
+                            strategy,
+                            params,
+                            start_time,
+                            end_time,
+                            return_pct,
+                            annual_return_pct,
+                            max_drawdown,
+                            win_rate,
+                            trade_count,
+                            avg_profit,
+                            avg_loss,
+                            runtime_ms
+                        )
+                    VALUES (%s, %s, %s, %s::jsonb, to_timestamp(%s), to_timestamp(%s), %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, created_at
                     """,
                     (
                         user["id"],
-                        strategy_name,
                         symbol,
+                        strategy_name,
+                        json.dumps(params),
                         result["startDate"] / 1000,
                         result["endDate"] / 1000,
                         Decimal(str(result["returnPct"])),
+                        Decimal(str(result["annualReturnPct"])),
                         Decimal(str(result["maxDrawdown"])),
                         Decimal(str(result["winRate"])),
                         int(result["tradeCount"]),
+                        Decimal(str(result["avgProfit"])),
+                        Decimal(str(result["avgLoss"])),
+                        runtime_ms,
                     ),
                 )
                 row = cur.fetchone()
             conn.commit()
         result["id"] = row["id"]
         result["createdAt"] = int(row["created_at"].timestamp() * 1000)
+        result["runtimeMs"] = runtime_ms
         self.end_json(200, {"backtest": result, "state": self.load_state(user["id"])})
 
     def handle_trade(self, parsed):

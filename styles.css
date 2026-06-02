@@ -683,6 +683,10 @@ table {
   min-width: 720px;
 }
 
+.backtest-trade-table {
+  min-width: 980px;
+}
+
 .trading-stock-table tbody tr {
   cursor: pointer;
 }

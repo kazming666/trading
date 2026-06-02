@@ -275,6 +275,9 @@
                 <option value="NVDA"></option>
                 <option value="TSLA"></option>
                 <option value="AMZN"></option>
+                <option value="META"></option>
+                <option value="GOOGL"></option>
+                <option value="AMD"></option>
               </datalist>
               <select id="strategySelect" aria-label="strategy">
                 <option value="moving_average">Moving Average</option>
@@ -298,16 +301,19 @@
               <div id="movingAverageParams" class="strategy-param-panel">
                 <label>Fast MA <input id="maFastInput" type="number" min="1" step="1" value="5"></label>
                 <label>Slow MA <input id="maSlowInput" type="number" min="2" step="1" value="20"></label>
+                <label>&#20132;&#26131;&#39057;&#29575; <input id="strategyFrequencyInput" type="number" min="1" max="60" step="1" value="1"></label>
               </div>
               <div id="rsiParams" class="strategy-param-panel" hidden>
                 <label>Period <input id="rsiPeriodInput" type="number" min="2" step="1" value="14"></label>
                 <label>Oversold <input id="rsiOversoldInput" type="number" min="1" max="50" step="1" value="30"></label>
                 <label>Overbought <input id="rsiOverboughtInput" type="number" min="50" max="99" step="1" value="70"></label>
+                <label>&#20132;&#26131;&#39057;&#29575; <input id="rsiFrequencyInput" type="number" min="1" max="60" step="1" value="1"></label>
               </div>
               <div id="macdParams" class="strategy-param-panel" hidden>
                 <label>Fast <input id="macdFastInput" type="number" min="1" step="1" value="12"></label>
                 <label>Slow <input id="macdSlowInput" type="number" min="2" step="1" value="26"></label>
                 <label>Signal <input id="macdSignalInput" type="number" min="1" step="1" value="9"></label>
+                <label>&#20132;&#26131;&#39057;&#29575; <input id="macdFrequencyInput" type="number" min="1" max="60" step="1" value="1"></label>
               </div>
             </section>
             <section class="quant-card">
@@ -320,6 +326,7 @@
                 <div><span>&#20132;&#26131;&#27425;&#25968;</span><strong id="backtestTradeCount">--</strong></div>
                 <div><span>&#24179;&#22343;&#30408;&#21033;</span><strong id="backtestAvgProfit">--</strong></div>
                 <div><span>&#24179;&#22343;&#20111;&#25439;</span><strong id="backtestAvgLoss">--</strong></div>
+                <div><span>&#36816;&#34892;&#26102;&#38388;</span><strong id="backtestRuntime">--</strong></div>
               </div>
             </section>
           </div>
@@ -376,6 +383,28 @@
               </div>
             </section>
           </div>
+
+          <div class="quant-card">
+            <div class="panel-head">
+              <h3>&#22238;&#27979;&#20132;&#26131;&#26126;&#32454;</h3>
+            </div>
+            <div class="table-wrap">
+              <table class="backtest-trade-table">
+                <thead>
+                  <tr>
+                    <th>&#20080;&#20837;&#26102;&#38388;</th>
+                    <th>&#21334;&#20986;&#26102;&#38388;</th>
+                    <th>&#20080;&#20837;&#20215;</th>
+                    <th>&#21334;&#20986;&#20215;</th>
+                    <th>&#25968;&#37327;</th>
+                    <th>&#25910;&#30410;&#29575;</th>
+                    <th>P/L</th>
+                  </tr>
+                </thead>
+                <tbody id="backtestTradesBody"></tbody>
+              </table>
+            </div>
+          </div>
         </section>
       </section>
 
@@ -423,6 +452,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260602m"></script>
+    <script src="app.js?v=20260602n"></script>
   </body>
 </html>
