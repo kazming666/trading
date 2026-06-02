@@ -15,7 +15,9 @@ const els = {
   loginBtn: document.querySelector("#loginBtn"),
   registerBtn: document.querySelector("#registerBtn"),
   logoutBtn: document.querySelector("#logoutBtn"),
+  appNav: document.querySelector(".app-nav"),
   authHint: document.querySelector("#authHint"),
+  settingsHint: document.querySelector("#settingsHint"),
   userStatus: document.querySelector("#userStatus"),
   feedStatus: document.querySelector("#feedStatus"),
   clock: document.querySelector("#clock"),
@@ -53,6 +55,9 @@ const els = {
   nextPageBtn: document.querySelector("#nextPageBtn"),
   pageInfo: document.querySelector("#pageInfo"),
   exportTradesBtn: document.querySelector("#exportTradesBtn"),
+  currentPasswordInput: document.querySelector("#currentPasswordInput"),
+  newPasswordInput: document.querySelector("#newPasswordInput"),
+  changePasswordBtn: document.querySelector("#changePasswordBtn"),
   statTotalTrades: document.querySelector("#statTotalTrades"),
   statWinRate: document.querySelector("#statWinRate"),
   statMaxProfit: document.querySelector("#statMaxProfit"),
@@ -112,6 +117,7 @@ let clockTimer;
 let tradePage = 1;
 let equityChart;
 let activeEquityRange = "today";
+let activePage = "dashboard";
 
 function emptyState() {
   return {
@@ -348,6 +354,7 @@ async function loadActiveHistory() {
 
 function render() {
   renderClock();
+  renderPage();
   renderSettings();
   renderWatchlist();
   renderMarket();
@@ -356,6 +363,21 @@ function render() {
   renderPositions();
   renderHistory();
   renderEquityChart();
+}
+
+function renderPage() {
+  document.querySelectorAll(".page-view").forEach((view) => {
+    view.classList.toggle("active", view.dataset.view === activePage);
+  });
+  els.appNav.querySelectorAll("button[data-page]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.page === activePage);
+  });
+  if (activePage === "dashboard") {
+    window.requestAnimationFrame(() => equityChart?.resize());
+  }
+  if (activePage === "trading") {
+    window.requestAnimationFrame(() => renderMarket());
+  }
 }
 
 function renderClock() {
@@ -376,13 +398,13 @@ function renderWatchlist() {
     row.role = "button";
     row.dataset.symbol = symbol;
     if (!quote) {
-      row.innerHTML = `<strong>${symbol}</strong><span>--</span><button class="remove-symbol" type="button" title="Remove" data-symbol="${symbol}">×</button><small>${text.waitQuote}</small><small>--</small>`;
+      row.innerHTML = `<strong>${symbol}</strong><span>--</span><button class="remove-symbol" type="button" title="Remove" data-symbol="${symbol}">&times;</button><small>${text.waitQuote}</small><small>--</small>`;
     } else {
       const move = quoteMove(quote);
       row.innerHTML = `
         <strong>${quote.symbol}</strong>
         <span class="${move.change >= 0 ? "up" : "down"}">${move.pct.toFixed(2)}%</span>
-        <button class="remove-symbol" type="button" title="Remove" data-symbol="${quote.symbol}">×</button>
+        <button class="remove-symbol" type="button" title="Remove" data-symbol="${quote.symbol}">&times;</button>
         <small>${quote.name}</small>
         <small>${fmtMoney(quote.price, quote.currency)}</small>
       `;
@@ -403,7 +425,7 @@ function renderMarket() {
   }
   const move = quoteMove(quote);
   els.activeSymbol.textContent = quote.symbol;
-  els.activeName.textContent = `${quote.name}${quote.exchange ? ` · ${quote.exchange}` : ""}${quote.marketState ? ` · ${quote.marketState}` : ""}`;
+  els.activeName.textContent = `${quote.name}${quote.exchange ? ` - ${quote.exchange}` : ""}${quote.marketState ? ` - ${quote.marketState}` : ""}`;
   els.activePrice.textContent = fmtMoney(quote.price, quote.currency);
   els.activeMove.textContent = `${fmtMoney(move.change, quote.currency)} ${move.pct.toFixed(2)}%`;
   els.activeMove.className = move.change >= 0 ? "up" : "down";
@@ -521,12 +543,12 @@ function renderPositions() {
       <div class="position-row">
         <div><strong>${symbol}</strong><span>${number.format(pos.qty)} ${text.shares}</span></div>
         <div><span>${text.avgPrice}</span><span>${fmtMoney(pos.avgPrice, currency)}</span></div>
-        <div><span>当前价格</span><span>${fmtMoney(price, currency)}</span></div>
+        <div><span>\u5f53\u524d\u4ef7\u683c</span><span>${fmtMoney(price, currency)}</span></div>
         <div><span>${text.marketValue}</span><span>${fmtMoney(value, currency)}</span></div>
-        <div><span>浮动盈亏</span><span class="${pnl >= 0 ? "up" : "down"}">${fmtMoney(pnl, currency)}</span></div>
-        <div><span>浮动收益率</span><span class="${pnl >= 0 ? "up" : "down"}">${percentText(pnlRate)}</span></div>
-        <div><span>持仓天数</span><span>${holdingDays}</span></div>
-        <div><span>买入时间</span><span>${fmtDate(openedAt)}</span></div>
+        <div><span>\u6d6e\u52a8\u76c8\u4e8f</span><span class="${pnl >= 0 ? "up" : "down"}">${fmtMoney(pnl, currency)}</span></div>
+        <div><span>\u6d6e\u52a8\u6536\u76ca\u7387</span><span class="${pnl >= 0 ? "up" : "down"}">${percentText(pnlRate)}</span></div>
+        <div><span>\u6301\u4ed3\u5929\u6570</span><span>${holdingDays}</span></div>
+        <div><span>\u4e70\u5165\u65f6\u95f4</span><span>${fmtDate(openedAt)}</span></div>
       </div>
     `;
   }).join("");
@@ -695,17 +717,35 @@ function setSide(side) {
   els.tradeBtn.classList.toggle("sell", side === "sell");
 }
 
+function setHint(message) {
+  els.tradeHint.textContent = message;
+  if (els.settingsHint) els.settingsHint.textContent = message;
+}
+
+function setPage(page) {
+  activePage = page || "dashboard";
+  renderPage();
+  if (activePage === "trading") {
+    pointerIndex = null;
+    els.chartTooltip.hidden = true;
+    renderMarket();
+    loadActiveHistory();
+  }
+}
+
+window.setPage = setPage;
+
 async function placeTrade() {
   const quote = state.quotes[state.activeSymbol];
   if (!quote) {
-    els.tradeHint.textContent = text.noPrice;
+    setHint(text.noPrice);
     return;
   }
   const notional = Number(els.notionalInput.value);
   let qty = Number(els.quantityInput.value);
   if (notional > 0) qty = notional / quote.price;
   if (!Number.isFinite(qty) || qty <= 0) {
-    els.tradeHint.textContent = text.invalidOrder;
+    setHint(text.invalidOrder);
     return;
   }
 
@@ -713,11 +753,11 @@ async function placeTrade() {
     const data = await apiPost("/api/trade", { symbol: state.activeSymbol, side: activeSide, qty });
     mergeServerState(data.state);
     state.quotes[state.activeSymbol] = quote;
-    els.tradeHint.textContent = `${text.filled} ${fmtMoney(data.fill.price, data.fill.currency)} ${text.simulatedFill} ${number.format(data.fill.qty)} ${text.shares}\u3002`;
+    setHint(`${text.filled} ${fmtMoney(data.fill.price, data.fill.currency)} ${text.simulatedFill} ${number.format(data.fill.qty)} ${text.shares}\u3002`);
     els.notionalInput.value = "";
     render();
   } catch (error) {
-    els.tradeHint.textContent = error.message;
+    setHint(error.message);
   }
 }
 
@@ -726,28 +766,28 @@ async function saveSettings() {
     const nextCash = Number(els.startingCashInput.value);
     const data = await apiPost("/api/account/reset", { startingCash: nextCash });
     mergeServerState(data.state);
-    els.tradeHint.textContent = text.initialSaved;
+    setHint(text.initialSaved);
     render();
     await refreshQuotes();
   } catch (error) {
-    els.tradeHint.textContent = error.message;
+    setHint(error.message);
   }
 }
 
 async function depositCash() {
   const amount = Number(els.depositInput.value);
   if (!Number.isFinite(amount) || amount <= 0) {
-    els.tradeHint.textContent = text.invalidDeposit;
+    setHint(text.invalidDeposit);
     return;
   }
   try {
     const data = await apiPost("/api/account/deposit", { amount });
     mergeServerState(data.state);
     els.depositInput.value = "";
-    els.tradeHint.textContent = `${text.deposited} ${fmtMoney(amount)}\u3002`;
+    setHint(`${text.deposited} ${fmtMoney(amount)}\u3002`);
     render();
   } catch (error) {
-    els.tradeHint.textContent = error.message;
+    setHint(error.message);
   }
 }
 
@@ -758,14 +798,14 @@ async function resetAccount() {
 async function addSymbol() {
   const query = els.symbolInput.value.trim();
   if (!query) return;
-  els.tradeHint.textContent = text.searching;
+  setHint(text.searching);
   try {
     const data = await apiGet(`/api/search?q=${encodeURIComponent(query)}`);
     const normalized = query.toUpperCase();
     const exact = data.results.find((item) => item.symbol.toUpperCase() === normalized);
     const picked = exact || data.results[0];
     if (!picked) {
-      els.tradeHint.textContent = `${text.noStock}: ${query}`;
+      setHint(`${text.noStock}: ${query}`);
       return;
     }
     const next = await apiPost("/api/watchlist", { symbol: picked.symbol });
@@ -774,14 +814,13 @@ async function addSymbol() {
     pointerIndex = null;
     els.chartTooltip.hidden = true;
     els.symbolInput.value = "";
-    els.tradeHint.textContent = `${text.added} ${picked.symbol} · ${picked.name}`;
+    setHint(`${text.added} ${picked.symbol} - ${picked.name}`);
     render();
     await refreshQuotes();
   } catch (error) {
-    els.tradeHint.textContent = `${text.addFailed}: ${error.message}`;
+    setHint(`${text.addFailed}: ${error.message}`);
   }
 }
-
 async function setActiveSymbol(symbol) {
   state.activeSymbol = symbol;
   pointerIndex = null;
@@ -790,7 +829,7 @@ async function setActiveSymbol(symbol) {
   try {
     await apiPost("/api/account/active-symbol", { symbol });
   } catch (error) {
-    els.tradeHint.textContent = error.message;
+    setHint(error.message);
   }
   await loadActiveHistory();
 }
@@ -804,7 +843,7 @@ async function removeSymbol(symbol) {
     render();
     await refreshQuotes();
   } catch (error) {
-    els.tradeHint.textContent = error.message;
+    setHint(error.message);
   }
 }
 
@@ -815,7 +854,7 @@ async function clearHistory() {
     tradePage = 1;
     render();
   } catch (error) {
-    els.tradeHint.textContent = error.message;
+    setHint(error.message);
   }
 }
 
@@ -826,7 +865,7 @@ function csvCell(value) {
 
 function exportTrades() {
   const rows = [
-    ["时间", "股票", "买卖方向", "数量", "价格", "金额", "成交后余额"],
+    ["\u65f6\u95f4", "\u80a1\u7968", "\u4e70\u5356\u65b9\u5411", "\u6570\u91cf", "\u4ef7\u683c", "\u91d1\u989d", "\u6210\u4ea4\u540e\u4f59\u989d"],
     ...state.trades.map((trade) => [
       fmtDateTime(trade.time),
       trade.symbol,
@@ -849,9 +888,29 @@ function exportTrades() {
   URL.revokeObjectURL(url);
 }
 
+async function changePassword() {
+  const currentPassword = els.currentPasswordInput.value;
+  const newPassword = els.newPasswordInput.value;
+  if (!currentPassword || newPassword.length < 6) {
+    setHint("\u8bf7\u8f93\u5165\u5f53\u524d\u5bc6\u7801\uff0c\u5e76\u8bbe\u7f6e\u81f3\u5c11 6 \u4f4d\u7684\u65b0\u5bc6\u7801\u3002");
+    return;
+  }
+  try {
+    await apiPost("/api/auth/password", { currentPassword, newPassword });
+    els.currentPasswordInput.value = "";
+    els.newPasswordInput.value = "";
+    setHint("\u5bc6\u7801\u5df2\u66f4\u65b0\u3002");
+  } catch (error) {
+    setHint(error.message);
+  }
+}
+
 els.loginBtn.addEventListener("click", () => loginOrRegister("login"));
 els.registerBtn.addEventListener("click", () => loginOrRegister("register"));
 els.logoutBtn.addEventListener("click", logout);
+els.appNav.querySelectorAll("button[data-page]").forEach((button) => {
+  button.addEventListener("click", () => setPage(button.dataset.page));
+});
 els.passwordInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loginOrRegister("login");
 });
@@ -903,6 +962,10 @@ els.depositInput.addEventListener("keydown", (event) => {
 els.resetBtn.addEventListener("click", resetAccount);
 els.clearHistoryBtn.addEventListener("click", clearHistory);
 els.exportTradesBtn.addEventListener("click", exportTrades);
+els.changePasswordBtn.addEventListener("click", changePassword);
+els.newPasswordInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") changePassword();
+});
 els.prevPageBtn.addEventListener("click", () => {
   tradePage = Math.max(1, tradePage - 1);
   renderHistory();

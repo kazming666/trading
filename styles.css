@@ -49,7 +49,8 @@ button {
 .segmented,
 .range-tabs,
 .equity-range-tabs,
-.panel-actions {
+.panel-actions,
+.app-nav {
   display: flex;
   align-items: center;
 }
@@ -58,6 +59,42 @@ button {
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 18px;
+}
+
+.app-nav {
+  gap: 8px;
+  overflow-x: auto;
+  padding: 6px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: var(--shadow);
+}
+
+.app-nav button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.app-nav button.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #ffffff;
+}
+
+.page-view {
+  display: none;
+}
+
+.page-view.active {
+  display: block;
 }
 
 .eyebrow {
@@ -197,6 +234,25 @@ label,
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr) 320px;
   gap: 14px;
+}
+
+.trading-layout,
+.settings-grid {
+  display: grid;
+  align-items: start;
+  gap: 14px;
+}
+
+.trading-layout {
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
+}
+
+.settings-grid {
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+}
+
+.wide-panel {
+  max-width: 900px;
 }
 
 .watchlist-panel,
@@ -426,11 +482,17 @@ input:focus {
 }
 
 .config-row label,
-.trade-panel label {
+.trade-panel label,
+.password-form label {
   display: grid;
   gap: 6px;
   flex: 1;
   font-weight: 700;
+}
+
+.password-form {
+  display: grid;
+  gap: 12px;
 }
 
 .segmented {
@@ -564,7 +626,9 @@ td:nth-child(3) {
 }
 
 @media (max-width: 1120px) {
-  .workspace {
+  .workspace,
+  .trading-layout,
+  .settings-grid {
     grid-template-columns: 240px minmax(0, 1fr);
   }
 
@@ -587,8 +651,16 @@ td:nth-child(3) {
   .metrics-grid,
   .stats-grid,
   .auth-panel,
-  .workspace {
+  .workspace,
+  .trading-layout,
+  .settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .app-nav {
+    position: sticky;
+    top: 0;
+    z-index: 4;
   }
 
   .auth-actions {

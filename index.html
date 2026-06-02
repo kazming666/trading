@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>&#27169;&#25311;&#32929;&#31080;&#20132;&#26131;&#21488;</title>
-    <link rel="stylesheet" href="styles.css?v=20260602b">
+    <link rel="stylesheet" href="styles.css?v=20260602c">
   </head>
   <body>
     <main class="app-shell">
@@ -20,6 +20,15 @@
           <span id="clock" class="clock">--:--:--</span>
         </div>
       </section>
+
+      <nav class="app-nav" aria-label="main navigation">
+        <button class="active" type="button" data-page="dashboard" onclick="window.setPage('dashboard')">Dashboard</button>
+        <button type="button" data-page="trading" onclick="window.setPage('trading')">Trading</button>
+        <button type="button" data-page="portfolio" onclick="window.setPage('portfolio')">Portfolio</button>
+        <button type="button" data-page="history" onclick="window.setPage('history')">History</button>
+        <button type="button" data-page="watchlist" onclick="window.setPage('watchlist')">Watchlist</button>
+        <button type="button" data-page="settings" onclick="window.setPage('settings')">Settings</button>
+      </nav>
 
       <section id="authPanel" class="auth-panel">
         <div>
@@ -41,185 +50,233 @@
         <p id="authHint" class="trade-hint"></p>
       </section>
 
-      <section class="metrics-grid" aria-label="account overview">
-        <div class="metric">
-          <span>&#36134;&#25143;&#26435;&#30410;</span>
-          <strong id="equityValue">$0.00</strong>
-        </div>
-        <div class="metric">
-          <span>&#21487;&#29992;&#29616;&#37329;</span>
-          <strong id="cashValue">$0.00</strong>
-        </div>
-        <div class="metric">
-          <span>&#25345;&#20179;&#24066;&#20540;</span>
-          <strong id="positionValue">$0.00</strong>
-        </div>
-        <div class="metric">
-          <span>&#24635;&#30408;&#20111;</span>
-          <strong id="pnlValue">$0.00</strong>
-        </div>
-      </section>
-
-      <section class="metrics-grid stats-grid" aria-label="user stats">
-        <div class="metric">
-          <span>&#24635;&#20132;&#26131;&#27425;&#25968;</span>
-          <strong id="statTotalTrades">0</strong>
-        </div>
-        <div class="metric">
-          <span>&#32988;&#29575;</span>
-          <strong id="statWinRate">0.00%</strong>
-        </div>
-        <div class="metric">
-          <span>&#26368;&#22823;&#30408;&#21033;&#20132;&#26131;</span>
-          <strong id="statMaxProfit">$0.00</strong>
-        </div>
-        <div class="metric">
-          <span>&#26368;&#22823;&#20111;&#25439;&#20132;&#26131;</span>
-          <strong id="statMaxLoss">$0.00</strong>
-        </div>
-        <div class="metric">
-          <span>&#32047;&#35745;&#20080;&#20837;&#37329;&#39069;</span>
-          <strong id="statBuyValue">$0.00</strong>
-        </div>
-        <div class="metric">
-          <span>&#32047;&#35745;&#21334;&#20986;&#37329;&#39069;</span>
-          <strong id="statSellValue">$0.00</strong>
-        </div>
-      </section>
-
-      <section class="workspace">
-        <aside class="watchlist-panel" aria-label="watchlist">
-          <div class="panel-head">
-            <h2>&#33258;&#36873;</h2>
-            <button id="resetBtn" class="icon-btn" type="button" title="reset account">&#8634;</button>
+      <section class="page-view active" data-view="dashboard">
+        <section class="metrics-grid" aria-label="account overview">
+          <div class="metric">
+            <span>&#36134;&#25143;&#26435;&#30410;</span>
+            <strong id="equityValue">$0.00</strong>
           </div>
-          <div class="symbol-entry">
-            <input id="symbolInput" type="text" autocomplete="off" placeholder="AAPL / 600519 / 00700">
-            <button id="addSymbolBtn" type="button">&#28155;&#21152;</button>
+          <div class="metric">
+            <span>&#21487;&#29992;&#29616;&#37329;</span>
+            <strong id="cashValue">$0.00</strong>
           </div>
-          <p class="mini-note">A &#32929;&#21487;&#36755;&#20837; 600519&#12289;000001&#65292;&#28207;&#32929;&#21487;&#36755;&#20837; 00700&#65292;&#32654;&#32929;&#36755;&#20837; AAPL&#12290;</p>
-          <div id="watchlist" class="watchlist"></div>
-        </aside>
-
-        <section class="market-panel" aria-label="market panel">
-          <div class="panel-head market-head">
-            <div>
-              <h2 id="activeSymbol">AAPL</h2>
-              <p id="activeName">Apple Inc.</p>
-            </div>
-            <div class="quote-box">
-              <strong id="activePrice">$0.00</strong>
-              <span id="activeMove">$0.00 0.00%</span>
-            </div>
+          <div class="metric">
+            <span>&#25345;&#20179;&#24066;&#20540;</span>
+            <strong id="positionValue">$0.00</strong>
           </div>
-
-          <div class="range-tabs" role="group" aria-label="chart range">
-            <button class="active" type="button" data-range="1d">1&#22825;</button>
-            <button type="button" data-range="1wk">1&#21608;</button>
-            <button type="button" data-range="1mo">1&#20010;&#26376;</button>
-            <button type="button" data-range="3mo">3&#20010;&#26376;</button>
-            <button type="button" data-range="6mo">6&#20010;&#26376;</button>
-            <button type="button" data-range="1y">1&#24180;</button>
-          </div>
-
-          <div class="chart-wrap">
-            <canvas id="priceChart" width="900" height="340" aria-label="price chart"></canvas>
-            <div id="chartTooltip" class="chart-tooltip" hidden></div>
-          </div>
-
-          <div class="config-row">
-            <label>
-              &#21021;&#22987;&#27169;&#25311;&#36164;&#37329;
-              <input id="startingCashInput" type="number" min="100" step="100" value="100000">
-            </label>
-            <label>
-              &#22686;&#21152;&#20837;&#37329;
-              <input id="depositInput" type="number" min="1" step="100" placeholder="&#36755;&#20837;&#37329;&#39069;">
-            </label>
-            <button id="depositBtn" type="button">&#22686;&#21152;&#37329;&#39069;</button>
-            <button id="saveSettingsBtn" type="button">&#20445;&#23384;&#21021;&#22987;&#36164;&#37329;</button>
+          <div class="metric">
+            <span>&#24635;&#30408;&#20111;</span>
+            <strong id="pnlValue">$0.00</strong>
           </div>
         </section>
 
-        <aside class="trade-panel" aria-label="trade panel">
+        <section class="history-panel">
           <div class="panel-head">
-            <h2>&#19979;&#21333;</h2>
-            <div class="segmented" role="group" aria-label="side">
-              <button id="buyTab" class="active" type="button">&#20080;&#20837;</button>
-              <button id="sellTab" type="button">&#21334;&#20986;</button>
+            <h2>&#36134;&#25143;&#36164;&#20135;&#26354;&#32447;</h2>
+            <div class="equity-range-tabs" aria-label="equity range">
+              <button class="active" type="button" data-equity-range="today">&#20170;&#26085;</button>
+              <button type="button" data-equity-range="week">&#26412;&#21608;</button>
+              <button type="button" data-equity-range="month">&#26412;&#26376;</button>
+              <button type="button" data-equity-range="all">&#20840;&#37096;</button>
             </div>
           </div>
-          <label>
-            &#25968;&#37327;
-            <input id="quantityInput" type="number" min="1" step="1" value="10">
-          </label>
-          <label>
-            &#35746;&#21333;&#37329;&#39069;
-            <input id="notionalInput" type="number" min="1" step="100" placeholder="&#25353;&#37329;&#39069;&#19979;&#21333;">
-          </label>
-          <button id="tradeBtn" class="primary-action" type="button">&#20080;&#20837;</button>
-          <p id="tradeHint" class="trade-hint">&#25353;&#24403;&#21069;&#30495;&#23454;&#26368;&#26032;&#20215;&#27169;&#25311;&#25104;&#20132;&#12290;</p>
-
-          <div class="subsection">
-            <h3>&#25345;&#20179;</h3>
-            <div id="positions" class="positions empty">&#26242;&#26080;&#25345;&#20179;</div>
+          <div class="equity-chart-wrap">
+            <canvas id="equityChart" height="220" aria-label="equity chart"></canvas>
           </div>
-        </aside>
+        </section>
       </section>
 
-      <section class="history-panel">
-        <div class="panel-head">
-          <h2>&#36134;&#25143;&#36164;&#20135;&#26354;&#32447;</h2>
-          <div class="equity-range-tabs" aria-label="equity range">
-            <button class="active" type="button" data-equity-range="today">&#20170;&#26085;</button>
-            <button type="button" data-equity-range="week">&#26412;&#21608;</button>
-            <button type="button" data-equity-range="month">&#26412;&#26376;</button>
-            <button type="button" data-equity-range="all">&#20840;&#37096;</button>
-          </div>
-        </div>
-        <div class="equity-chart-wrap">
-          <canvas id="equityChart" height="220" aria-label="equity chart"></canvas>
-        </div>
+      <section class="page-view" data-view="trading">
+        <section class="trading-layout">
+          <aside class="watchlist-panel" aria-label="stock search">
+            <div class="panel-head">
+              <h2>&#32929;&#31080;&#25628;&#32034;</h2>
+            </div>
+            <div class="symbol-entry">
+              <input id="symbolInput" type="text" autocomplete="off" placeholder="AAPL / 600519 / 00700">
+              <button id="addSymbolBtn" type="button">&#28155;&#21152;</button>
+            </div>
+            <p class="mini-note">A &#32929;&#21487;&#36755;&#20837; 600519&#12289;000001&#65292;&#28207;&#32929;&#21487;&#36755;&#20837; 00700&#65292;&#32654;&#32929;&#36755;&#20837; AAPL&#12290;</p>
+          </aside>
+
+          <section class="market-panel" aria-label="market panel">
+            <div class="panel-head market-head">
+              <div>
+                <h2 id="activeSymbol">AAPL</h2>
+                <p id="activeName">Apple Inc.</p>
+              </div>
+              <div class="quote-box">
+                <strong id="activePrice">$0.00</strong>
+                <span id="activeMove">$0.00 0.00%</span>
+              </div>
+            </div>
+
+            <div class="range-tabs" role="group" aria-label="chart range">
+              <button class="active" type="button" data-range="1d">1&#22825;</button>
+              <button type="button" data-range="1wk">1&#21608;</button>
+              <button type="button" data-range="1mo">1&#20010;&#26376;</button>
+              <button type="button" data-range="3mo">3&#20010;&#26376;</button>
+              <button type="button" data-range="6mo">6&#20010;&#26376;</button>
+              <button type="button" data-range="1y">1&#24180;</button>
+            </div>
+
+            <div class="chart-wrap">
+              <canvas id="priceChart" width="900" height="340" aria-label="price chart"></canvas>
+              <div id="chartTooltip" class="chart-tooltip" hidden></div>
+            </div>
+          </section>
+
+          <aside class="trade-panel" aria-label="trade panel">
+            <div class="panel-head">
+              <h2>&#19979;&#21333;</h2>
+              <div class="segmented" role="group" aria-label="side">
+                <button id="buyTab" class="active" type="button">&#20080;&#20837;</button>
+                <button id="sellTab" type="button">&#21334;&#20986;</button>
+              </div>
+            </div>
+            <label>
+              &#25968;&#37327;
+              <input id="quantityInput" type="number" min="1" step="1" value="10">
+            </label>
+            <label>
+              &#35746;&#21333;&#37329;&#39069;
+              <input id="notionalInput" type="number" min="1" step="100" placeholder="&#25353;&#37329;&#39069;&#19979;&#21333;">
+            </label>
+            <button id="tradeBtn" class="primary-action" type="button">&#20080;&#20837;</button>
+            <p id="tradeHint" class="trade-hint">&#25353;&#24403;&#21069;&#30495;&#23454;&#26368;&#26032;&#20215;&#27169;&#25311;&#25104;&#20132;&#12290;</p>
+          </aside>
+        </section>
       </section>
 
-      <section class="history-panel">
-        <div class="panel-head">
-          <h2>&#20132;&#26131;&#35760;&#24405;</h2>
-          <div class="panel-actions">
-            <button id="exportTradesBtn" class="ghost-btn" type="button">&#23548;&#20986;&#20132;&#26131;&#35760;&#24405;</button>
-            <button id="clearHistoryBtn" class="ghost-btn" type="button">&#28165;&#31354;&#35760;&#24405;</button>
+      <section class="page-view" data-view="portfolio">
+        <section class="metrics-grid stats-grid" aria-label="user stats">
+          <div class="metric">
+            <span>&#24635;&#20132;&#26131;&#27425;&#25968;</span>
+            <strong id="statTotalTrades">0</strong>
           </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>&#26102;&#38388;</th>
-                <th>&#32929;&#31080;</th>
-                <th>&#26041;&#21521;</th>
-                <th>&#25968;&#37327;</th>
-                <th>&#20215;&#26684;</th>
-                <th>&#37329;&#39069;</th>
-                <th>&#25104;&#20132;&#21518;&#20313;&#39069;</th>
-                <th>&#25104;&#20132;&#21518;&#25345;&#20179;</th>
-                <th>&#25104;&#20132;&#21069;&#24635;&#36164;&#20135;</th>
-                <th>&#25104;&#20132;&#21518;&#24635;&#36164;&#20135;</th>
-                <th>&#24635;&#36164;&#20135;&#21464;&#21270;</th>
-              </tr>
-            </thead>
-            <tbody id="historyBody"></tbody>
-          </table>
-        </div>
-        <div class="pagination">
-          <button id="prevPageBtn" type="button">&#19978;&#19968;&#39029;</button>
-          <span id="pageInfo">1 / 1</span>
-          <button id="nextPageBtn" type="button">&#19979;&#19968;&#39029;</button>
-        </div>
+          <div class="metric">
+            <span>&#32988;&#29575;</span>
+            <strong id="statWinRate">0.00%</strong>
+          </div>
+          <div class="metric">
+            <span>&#26368;&#22823;&#30408;&#21033;&#20132;&#26131;</span>
+            <strong id="statMaxProfit">$0.00</strong>
+          </div>
+          <div class="metric">
+            <span>&#26368;&#22823;&#20111;&#25439;&#20132;&#26131;</span>
+            <strong id="statMaxLoss">$0.00</strong>
+          </div>
+          <div class="metric">
+            <span>&#32047;&#35745;&#20080;&#20837;&#37329;&#39069;</span>
+            <strong id="statBuyValue">$0.00</strong>
+          </div>
+          <div class="metric">
+            <span>&#32047;&#35745;&#21334;&#20986;&#37329;&#39069;</span>
+            <strong id="statSellValue">$0.00</strong>
+          </div>
+        </section>
+
+        <section class="history-panel">
+          <div class="panel-head">
+            <h2>&#24403;&#21069;&#25345;&#20179;</h2>
+          </div>
+          <div id="positions" class="positions empty">&#26242;&#26080;&#25345;&#20179;</div>
+        </section>
+      </section>
+
+      <section class="page-view" data-view="history">
+        <section class="history-panel">
+          <div class="panel-head">
+            <div>
+              <h2>&#20132;&#26131;&#35760;&#24405;</h2>
+              <p class="mini-note">&#21547;&#20080;&#21334;&#25104;&#20132;&#21644;&#36164;&#37329;&#20837;&#37329;&#35760;&#24405;&#12290;</p>
+            </div>
+            <div class="panel-actions">
+              <button id="exportTradesBtn" class="ghost-btn" type="button">&#23548;&#20986;&#20132;&#26131;&#35760;&#24405;</button>
+              <button id="clearHistoryBtn" class="ghost-btn" type="button">&#28165;&#31354;&#35760;&#24405;</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>&#26102;&#38388;</th>
+                  <th>&#32929;&#31080;</th>
+                  <th>&#26041;&#21521;</th>
+                  <th>&#25968;&#37327;</th>
+                  <th>&#20215;&#26684;</th>
+                  <th>&#37329;&#39069;</th>
+                  <th>&#25104;&#20132;&#21518;&#20313;&#39069;</th>
+                  <th>&#25104;&#20132;&#21518;&#25345;&#20179;</th>
+                  <th>&#25104;&#20132;&#21069;&#24635;&#36164;&#20135;</th>
+                  <th>&#25104;&#20132;&#21518;&#24635;&#36164;&#20135;</th>
+                  <th>&#24635;&#36164;&#20135;&#21464;&#21270;</th>
+                </tr>
+              </thead>
+              <tbody id="historyBody"></tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <button id="prevPageBtn" type="button">&#19978;&#19968;&#39029;</button>
+            <span id="pageInfo">1 / 1</span>
+            <button id="nextPageBtn" type="button">&#19979;&#19968;&#39029;</button>
+          </div>
+        </section>
+      </section>
+
+      <section class="page-view" data-view="watchlist">
+        <section class="watchlist-panel wide-panel" aria-label="watchlist">
+          <div class="panel-head">
+            <h2>&#33258;&#36873;&#32929;</h2>
+          </div>
+          <div id="watchlist" class="watchlist"></div>
+        </section>
+      </section>
+
+      <section class="page-view" data-view="settings">
+        <section class="settings-grid">
+          <div class="history-panel">
+            <div class="panel-head">
+              <h2>&#36164;&#37329;&#35774;&#32622;</h2>
+            </div>
+            <div class="config-row">
+              <label>
+                &#21021;&#22987;&#27169;&#25311;&#36164;&#37329;
+                <input id="startingCashInput" type="number" min="100" step="100" value="100000">
+              </label>
+              <label>
+                &#22686;&#21152;&#20837;&#37329;
+                <input id="depositInput" type="number" min="1" step="100" placeholder="&#36755;&#20837;&#37329;&#39069;">
+              </label>
+              <button id="depositBtn" type="button">&#22686;&#21152;&#37329;&#39069;</button>
+              <button id="saveSettingsBtn" type="button">&#20445;&#23384;&#21021;&#22987;&#36164;&#37329;</button>
+              <button id="resetBtn" class="ghost-btn" type="button">&#37325;&#32622;&#27169;&#25311;&#36134;&#25143;</button>
+            </div>
+          </div>
+
+          <div class="history-panel">
+            <div class="panel-head">
+              <h2>&#20462;&#25913;&#23494;&#30721;</h2>
+            </div>
+            <div class="password-form">
+              <label>
+                &#24403;&#21069;&#23494;&#30721;
+                <input id="currentPasswordInput" type="password" autocomplete="current-password">
+              </label>
+              <label>
+                &#26032;&#23494;&#30721;
+                <input id="newPasswordInput" type="password" autocomplete="new-password" placeholder="至少 6 位">
+              </label>
+              <button id="changePasswordBtn" class="primary-action" type="button">&#20445;&#23384;&#26032;&#23494;&#30721;</button>
+              <p id="settingsHint" class="trade-hint"></p>
+            </div>
+          </div>
+        </section>
       </section>
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="app.js?v=20260602f"></script>
+    <script src="app.js?v=20260602j"></script>
   </body>
 </html>

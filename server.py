@@ -295,6 +295,7 @@ class Handler(SimpleHTTPRequestHandler):
         "/api/auth/register": "handle_register",
         "/api/auth/login": "handle_login",
         "/api/auth/logout": "handle_logout",
+        "/api/auth/password": "handle_change_password",
         "/api/account/deposit": "handle_deposit",
         "/api/account/reset": "handle_reset_account",
         "/api/account/active-symbol": "handle_active_symbol",
@@ -509,6 +510,31 @@ class Handler(SimpleHTTPRequestHandler):
                     cur.execute("DELETE FROM sessions WHERE token_hash = %s", (token_hash(morsel.value),))
                 conn.commit()
         self.end_json(200, {"ok": True}, {"Set-Cookie": self.clear_cookie_header()})
+
+    def handle_change_password(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        data = self.read_json()
+        current_password = data.get("currentPassword") or ""
+        new_password = data.get("newPassword") or ""
+        if len(new_password) < 6:
+            self.end_json(400, {"error": "New password must be at least 6 characters."})
+            return
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT password_salt, password_hash FROM users WHERE id = %s", (user["id"],))
+                password_row = cur.fetchone()
+                if not password_row or not verify_password(current_password, password_row["password_salt"], password_row["password_hash"]):
+                    self.end_json(401, {"error": "Current password is incorrect."})
+                    return
+                salt, password_hash = hash_password(new_password)
+                cur.execute(
+                    "UPDATE users SET password_salt = %s, password_hash = %s, updated_at = now() WHERE id = %s",
+                    (salt, password_hash, user["id"]),
+                )
+            conn.commit()
+        self.end_json(200, {"ok": True})
 
     def handle_me(self, parsed):
         if not db_ready():
