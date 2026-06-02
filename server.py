@@ -5,6 +5,7 @@ from urllib.error import URLError, HTTPError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from http import cookies
 from decimal import Decimal
+from pathlib import Path
 import base64
 import hashlib
 import hmac
@@ -28,6 +29,7 @@ SESSION_COOKIE = "ptd_session"
 SESSION_DAYS = 30
 DEFAULT_CASH = Decimal("100000")
 DEFAULT_SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "600519.SS", "000001.SZ", "0700.HK"]
+PROJECT_DIR = Path(__file__).resolve().parent
 
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range={range}&interval={interval}"
 YAHOO_SEARCH = "https://query1.finance.yahoo.com/v1/finance/search?q={query}&quotesCount=8&newsCount=0"
@@ -144,9 +146,8 @@ def init_db():
     if not db_ready():
         print("Warning: DATABASE_URL is not configured; auth/account APIs will return 503.")
         return
-    schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
-    with open(schema_path, "r", encoding="utf-8") as schema_file:
-        schema = schema_file.read()
+    schema_path = PROJECT_DIR / "schema.sql"
+    schema = schema_path.read_text(encoding="utf-8")
     with db_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(schema)
