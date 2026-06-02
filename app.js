@@ -45,8 +45,31 @@ const els = {
   tradeBtn: document.querySelector("#tradeBtn"),
   tradeHint: document.querySelector("#tradeHint"),
   strategyHint: document.querySelector("#strategyHint"),
+  strategySymbolInput: document.querySelector("#strategySymbolInput"),
   strategySelect: document.querySelector("#strategySelect"),
+  backtestRangeSelect: document.querySelector("#backtestRangeSelect"),
   runStrategyBtn: document.querySelector("#runStrategyBtn"),
+  backtestStrategyBtn: document.querySelector("#backtestStrategyBtn"),
+  movingAverageParams: document.querySelector("#movingAverageParams"),
+  rsiParams: document.querySelector("#rsiParams"),
+  macdParams: document.querySelector("#macdParams"),
+  maFastInput: document.querySelector("#maFastInput"),
+  maSlowInput: document.querySelector("#maSlowInput"),
+  rsiPeriodInput: document.querySelector("#rsiPeriodInput"),
+  rsiOversoldInput: document.querySelector("#rsiOversoldInput"),
+  rsiOverboughtInput: document.querySelector("#rsiOverboughtInput"),
+  macdFastInput: document.querySelector("#macdFastInput"),
+  macdSlowInput: document.querySelector("#macdSlowInput"),
+  macdSignalInput: document.querySelector("#macdSignalInput"),
+  backtestReturn: document.querySelector("#backtestReturn"),
+  backtestAnnualReturn: document.querySelector("#backtestAnnualReturn"),
+  backtestDrawdown: document.querySelector("#backtestDrawdown"),
+  backtestWinRate: document.querySelector("#backtestWinRate"),
+  backtestTradeCount: document.querySelector("#backtestTradeCount"),
+  backtestAvgProfit: document.querySelector("#backtestAvgProfit"),
+  backtestAvgLoss: document.querySelector("#backtestAvgLoss"),
+  backtestEquityChart: document.querySelector("#backtestEquityChart"),
+  strategyRankingBody: document.querySelector("#strategyRankingBody"),
   tradingStockBody: document.querySelector("#tradingStockBody"),
   signalHistoryBody: document.querySelector("#signalHistoryBody"),
   positions: document.querySelector("#positions"),
@@ -121,6 +144,8 @@ let pollTimer;
 let clockTimer;
 let tradePage = 1;
 let equityChart;
+let backtestEquityChart;
+let latestBacktest = null;
 let activeEquityRange = "today";
 let activePage = "dashboard";
 
@@ -139,6 +164,7 @@ function emptyState() {
     equityHistory: [],
     dailySnapshots: [],
     signalHistory: [],
+    backtestHistory: [],
     stats: {
       totalTrades: 0,
       winRate: 0,
@@ -370,6 +396,10 @@ function render() {
   renderPositions();
   renderHistory();
   renderSignalHistory();
+  renderStrategyControls();
+  renderBacktestRanking();
+  renderBacktestSummary(latestBacktest);
+  renderBacktestChart(latestBacktest?.equityCurve || []);
   renderEquityChart();
 }
 
@@ -385,6 +415,9 @@ function renderPage() {
   }
   if (activePage === "trading") {
     window.requestAnimationFrame(() => renderMarket());
+  }
+  if (activePage === "signals") {
+    window.requestAnimationFrame(() => backtestEquityChart?.resize());
   }
 }
 
@@ -899,6 +932,7 @@ async function addSymbol() {
 }
 async function setActiveSymbol(symbol) {
   state.activeSymbol = symbol;
+  if (els.strategySymbolInput) els.strategySymbolInput.value = symbol;
   pointerIndex = null;
   els.chartTooltip.hidden = true;
   render();
@@ -954,18 +988,175 @@ function renderSignalHistory() {
   `).join("");
 }
 
+function currentStrategySymbol() {
+  const raw = els.strategySymbolInput?.value?.trim() || state.activeSymbol || "AAPL";
+  return raw.toUpperCase();
+}
+
+function strategyParams() {
+  const strategyName = els.strategySelect.value;
+  if (strategyName === "moving_average") {
+    return {
+      fastMa: Number(els.maFastInput.value || 5),
+      slowMa: Number(els.maSlowInput.value || 20)
+    };
+  }
+  if (strategyName === "rsi") {
+    return {
+      period: Number(els.rsiPeriodInput.value || 14),
+      oversold: Number(els.rsiOversoldInput.value || 30),
+      overbought: Number(els.rsiOverboughtInput.value || 70)
+    };
+  }
+  return {
+    fast: Number(els.macdFastInput.value || 12),
+    slow: Number(els.macdSlowInput.value || 26),
+    signal: Number(els.macdSignalInput.value || 9)
+  };
+}
+
+function renderStrategyControls() {
+  if (!els.strategySelect) return;
+  const strategyName = els.strategySelect.value;
+  els.movingAverageParams.hidden = strategyName !== "moving_average";
+  els.rsiParams.hidden = strategyName !== "rsi";
+  els.macdParams.hidden = strategyName !== "macd";
+  if (els.strategySymbolInput && !els.strategySymbolInput.value) {
+    els.strategySymbolInput.value = state.activeSymbol || "AAPL";
+  }
+}
+
+function renderBacktestSummary(result) {
+  const hasResult = Boolean(result);
+  const returnPct = Number(result?.returnPct || 0);
+  const annualReturnPct = Number(result?.annualReturnPct || 0);
+  const drawdown = Number(result?.maxDrawdown || 0);
+  const winRate = Number(result?.winRate || 0);
+  const avgProfit = Number(result?.avgProfit || 0);
+  const avgLoss = Number(result?.avgLoss || 0);
+  els.backtestReturn.textContent = hasResult ? percentText(returnPct) : "--";
+  els.backtestReturn.className = returnPct >= 0 ? "up" : "down";
+  els.backtestAnnualReturn.textContent = hasResult ? percentText(annualReturnPct) : "--";
+  els.backtestAnnualReturn.className = annualReturnPct >= 0 ? "up" : "down";
+  els.backtestDrawdown.textContent = hasResult ? percentText(drawdown) : "--";
+  els.backtestWinRate.textContent = hasResult ? percentText(winRate) : "--";
+  els.backtestTradeCount.textContent = hasResult ? number.format(result.tradeCount || 0) : "--";
+  els.backtestAvgProfit.textContent = hasResult ? fmtMoney(avgProfit) : "--";
+  els.backtestAvgProfit.className = avgProfit >= 0 ? "up" : "down";
+  els.backtestAvgLoss.textContent = hasResult ? fmtMoney(avgLoss) : "--";
+  els.backtestAvgLoss.className = avgLoss >= 0 ? "up" : "down";
+}
+
+function renderBacktestRanking() {
+  if (!els.strategyRankingBody) return;
+  const rows = [...(state.backtestHistory || [])]
+    .sort((a, b) => Number(b.returnPct || 0) - Number(a.returnPct || 0))
+    .slice(0, 20);
+  if (!rows.length) {
+    els.strategyRankingBody.innerHTML = `<tr><td colspan="5">\u6682\u65e0\u56de\u6d4b\u8bb0\u5f55</td></tr>`;
+    return;
+  }
+  els.strategyRankingBody.innerHTML = rows.map((row) => {
+    const returnPct = Number(row.returnPct || 0);
+    return `
+      <tr>
+        <td>${row.strategy}</td>
+        <td>${row.symbol}</td>
+        <td class="${returnPct >= 0 ? "up" : "down"}">${percentText(returnPct)}</td>
+        <td>${percentText(row.maxDrawdown)}</td>
+        <td>${percentText(row.winRate)}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function renderBacktestChart(points = []) {
+  if (!els.backtestEquityChart || !window.Chart) return;
+  const chartPoints = points
+    .map((point) => ({ time: Number(point.time), equity: Number(point.equity) }))
+    .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.equity));
+  const labels = chartPoints.map((point) => fmtDate(point.time));
+  const values = chartPoints.map((point) => point.equity);
+  if (!backtestEquityChart) {
+    backtestEquityChart = new Chart(els.backtestEquityChart, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          label: "\u8d44\u91d1\u66f2\u7ebf",
+          data: values,
+          borderColor: "#167f55",
+          backgroundColor: "rgba(22, 127, 85, 0.12)",
+          fill: true,
+          tension: 0.22,
+          pointRadius: 1.5
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: "index" },
+        plugins: {
+          legend: { display: true, labels: { boxWidth: 10, boxHeight: 10 } },
+          tooltip: {
+            callbacks: {
+              label: (item) => `${item.dataset.label}: ${fmtMoney(item.parsed.y)}`
+            }
+          },
+          zoom: {
+            pan: { enabled: true, mode: "x" },
+            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" }
+          }
+        },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8 } },
+          y: {
+            ticks: { callback: (value) => fmtMoney(value) }
+          }
+        }
+      }
+    });
+    return;
+  }
+  backtestEquityChart.data.labels = labels;
+  backtestEquityChart.data.datasets[0].data = values;
+  backtestEquityChart.update();
+}
+
 async function runStrategySignal() {
   if (!currentUser) {
     setHint(text.loginRequired);
     return;
   }
   const strategyName = els.strategySelect.value;
-  const symbol = state.activeSymbol;
+  const symbol = currentStrategySymbol();
+  const params = strategyParams();
   setHint(`Running ${strategyName} on ${symbol}...`);
   try {
-    const data = await apiPost("/api/strategy/run", { strategyName, symbol });
+    const data = await apiPost("/api/strategy/run", { strategyName, symbol, params });
     mergeServerState(data.state);
     setHint(`${data.signal.strategyName} ${data.signal.symbol}: ${data.signal.signal} - ${data.signal.reason}`);
+    render();
+  } catch (error) {
+    setHint(error.message);
+  }
+}
+
+async function runStrategyBacktest() {
+  if (!currentUser) {
+    setHint(text.loginRequired);
+    return;
+  }
+  const strategyName = els.strategySelect.value;
+  const symbol = currentStrategySymbol();
+  const range = els.backtestRangeSelect.value;
+  const params = strategyParams();
+  setHint(`Backtesting ${strategyName} on ${symbol}...`);
+  try {
+    const data = await apiPost("/api/strategy/backtest", { strategyName, symbol, range, params });
+    mergeServerState(data.state);
+    latestBacktest = data.backtest;
+    setHint(`Backtest saved: ${strategyName} ${symbol}, return ${percentText(data.backtest.returnPct)}.`);
     render();
   } catch (error) {
     setHint(error.message);
@@ -1081,6 +1272,11 @@ els.resetBtn.addEventListener("click", resetAccount);
 els.clearHistoryBtn.addEventListener("click", clearHistory);
 els.exportTradesBtn.addEventListener("click", exportTrades);
 els.runStrategyBtn.addEventListener("click", runStrategySignal);
+els.backtestStrategyBtn.addEventListener("click", runStrategyBacktest);
+els.strategySelect.addEventListener("change", renderStrategyControls);
+els.strategySymbolInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") runStrategySignal();
+});
 els.changePasswordBtn.addEventListener("click", changePassword);
 els.newPasswordInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") changePassword();

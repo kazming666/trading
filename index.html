@@ -261,37 +261,120 @@
       </section>
 
       <section class="page-view" data-view="signals">
-        <section class="history-panel">
+        <section class="history-panel quant-panel">
           <div class="panel-head">
             <div>
-              <h2>&#31574;&#30053;&#20449;&#21495;</h2>
-              <p class="mini-note">&#25163;&#21160;&#36816;&#34892;&#31574;&#30053;&#20165;&#29983;&#25104;&#20449;&#21495;&#24182;&#20889;&#20837;&#25968;&#25454;&#24211;&#65292;&#26242;&#19981;&#33258;&#21160;&#19979;&#21333;&#12290;</p>
+              <h2>Quant Research Center</h2>
+              <p class="mini-note">&#31574;&#30053;&#20998;&#26512;&#12289;&#21382;&#21490;&#22238;&#27979;&#21644;&#20928;&#20540;&#26354;&#32447;&#65292;&#20165;&#29992;&#20110;&#30740;&#31350;&#65292;&#26242;&#19981;&#33258;&#21160;&#19979;&#21333;&#12290;</p>
             </div>
             <div class="strategy-controls">
+              <input id="strategySymbolInput" list="strategySymbolList" type="text" value="AAPL" aria-label="symbol">
+              <datalist id="strategySymbolList">
+                <option value="AAPL"></option>
+                <option value="MSFT"></option>
+                <option value="NVDA"></option>
+                <option value="TSLA"></option>
+                <option value="AMZN"></option>
+              </datalist>
               <select id="strategySelect" aria-label="strategy">
                 <option value="moving_average">Moving Average</option>
                 <option value="rsi">RSI</option>
                 <option value="macd">MACD</option>
               </select>
+              <select id="backtestRangeSelect" aria-label="backtest range">
+                <option value="1mo">1&#20010;&#26376;</option>
+                <option value="3mo" selected>3&#20010;&#26376;</option>
+                <option value="6mo">6&#20010;&#26376;</option>
+                <option value="1y">1&#24180;</option>
+              </select>
               <button id="runStrategyBtn" class="primary-action" type="button">&#36816;&#34892;&#31574;&#30053;</button>
+              <button id="backtestStrategyBtn" class="primary-action" type="button">Backtest</button>
             </div>
           </div>
           <p id="strategyHint" class="trade-hint"></p>
-          <div class="table-wrap">
-            <table class="signal-table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>&#26102;&#38388;</th>
-                  <th>&#32929;&#31080;</th>
-                  <th>&#31574;&#30053;</th>
-                  <th>&#20449;&#21495;</th>
-                  <th>&#20215;&#26684;</th>
-                  <th>&#21407;&#22240;</th>
-                </tr>
-              </thead>
-              <tbody id="signalHistoryBody"></tbody>
-            </table>
+          <div class="quant-grid">
+            <section class="quant-card">
+              <h3>&#31574;&#30053;&#21442;&#25968;</h3>
+              <div id="movingAverageParams" class="strategy-param-panel">
+                <label>Fast MA <input id="maFastInput" type="number" min="1" step="1" value="5"></label>
+                <label>Slow MA <input id="maSlowInput" type="number" min="2" step="1" value="20"></label>
+              </div>
+              <div id="rsiParams" class="strategy-param-panel" hidden>
+                <label>Period <input id="rsiPeriodInput" type="number" min="2" step="1" value="14"></label>
+                <label>Oversold <input id="rsiOversoldInput" type="number" min="1" max="50" step="1" value="30"></label>
+                <label>Overbought <input id="rsiOverboughtInput" type="number" min="50" max="99" step="1" value="70"></label>
+              </div>
+              <div id="macdParams" class="strategy-param-panel" hidden>
+                <label>Fast <input id="macdFastInput" type="number" min="1" step="1" value="12"></label>
+                <label>Slow <input id="macdSlowInput" type="number" min="2" step="1" value="26"></label>
+                <label>Signal <input id="macdSignalInput" type="number" min="1" step="1" value="9"></label>
+              </div>
+            </section>
+            <section class="quant-card">
+              <h3>&#22238;&#27979;&#32467;&#26524;</h3>
+              <div class="backtest-metrics">
+                <div><span>&#24635;&#25910;&#30410;&#29575;</span><strong id="backtestReturn">--</strong></div>
+                <div><span>&#24180;&#21270;&#25910;&#30410;&#29575;</span><strong id="backtestAnnualReturn">--</strong></div>
+                <div><span>&#26368;&#22823;&#22238;&#25764;</span><strong id="backtestDrawdown">--</strong></div>
+                <div><span>&#32988;&#29575;</span><strong id="backtestWinRate">--</strong></div>
+                <div><span>&#20132;&#26131;&#27425;&#25968;</span><strong id="backtestTradeCount">--</strong></div>
+                <div><span>&#24179;&#22343;&#30408;&#21033;</span><strong id="backtestAvgProfit">--</strong></div>
+                <div><span>&#24179;&#22343;&#20111;&#25439;</span><strong id="backtestAvgLoss">--</strong></div>
+              </div>
+            </section>
+          </div>
+
+          <div class="quant-chart-card">
+            <div class="panel-head">
+              <h3>&#22238;&#27979;&#36164;&#37329;&#26354;&#32447;</h3>
+              <span class="mini-note">Zoom and pan are available through the browser chart tooltip interaction.</span>
+            </div>
+            <div class="backtest-chart-wrap">
+              <canvas id="backtestEquityChart"></canvas>
+            </div>
+          </div>
+
+          <div class="quant-grid lower">
+            <section class="quant-card">
+              <div class="panel-head">
+                <h3>&#31574;&#30053;&#25490;&#34892;&#27036;</h3>
+              </div>
+              <div class="table-wrap">
+                <table class="ranking-table">
+                  <thead>
+                    <tr>
+                      <th>&#31574;&#30053;</th>
+                      <th>&#32929;&#31080;</th>
+                      <th>&#25910;&#30410;&#29575;</th>
+                      <th>&#26368;&#22823;&#22238;&#25764;</th>
+                      <th>&#32988;&#29575;</th>
+                    </tr>
+                  </thead>
+                  <tbody id="strategyRankingBody"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="quant-card">
+              <div class="panel-head">
+                <h3>&#26368;&#36817;&#31574;&#30053;&#20449;&#21495;</h3>
+              </div>
+              <div class="table-wrap">
+                <table class="signal-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>&#26102;&#38388;</th>
+                      <th>&#32929;&#31080;</th>
+                      <th>&#31574;&#30053;</th>
+                      <th>&#20449;&#21495;</th>
+                      <th>&#20215;&#26684;</th>
+                      <th>&#21407;&#22240;</th>
+                    </tr>
+                  </thead>
+                  <tbody id="signalHistoryBody"></tbody>
+                </table>
+              </div>
+            </section>
           </div>
         </section>
       </section>
@@ -339,6 +422,7 @@
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="app.js?v=20260602l"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
+    <script src="app.js?v=20260602m"></script>
   </body>
 </html>

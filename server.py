@@ -3,6 +3,7 @@ from urllib.parse import parse_qs, urlparse, quote
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from http import cookies
 from decimal import Decimal
 from pathlib import Path
@@ -40,6 +41,12 @@ HISTORY_RANGES = {
     "1d": ("1d", "1m"),
     "1wk": ("5d", "5m"),
     "1mo": ("1mo", "30m"),
+    "3mo": ("3mo", "1d"),
+    "6mo": ("6mo", "1d"),
+    "1y": ("1y", "1d"),
+}
+BACKTEST_RANGES = {
+    "1mo": ("1mo", "1d"),
     "3mo": ("3mo", "1d"),
     "6mo": ("6mo", "1d"),
     "1y": ("1y", "1d"),
@@ -127,6 +134,125 @@ def normalize_history(symbol, range_key):
     if not points:
         raise ValueError("No historical prices returned")
     return {"symbol": symbol.upper(), "range": range_key, "points": points[-360:]}
+
+
+def normalize_backtest_history(symbol, range_key):
+    range_value, interval = BACKTEST_RANGES.get(range_key, BACKTEST_RANGES["3mo"])
+    chart = yahoo_chart(symbol, range_value, interval)
+    timestamps = chart.get("timestamp") or []
+    quote_data = ((chart.get("indicators") or {}).get("quote") or [{}])[0]
+    closes = quote_data.get("close") or []
+    points = [{"t": ts * 1000, "p": float(close)} for ts, close in zip(timestamps, closes) if close is not None]
+    if len(points) < 2:
+        raise ValueError("No historical prices returned")
+    return points
+
+
+def clean_strategy_params(strategy_name, params):
+    params = params or {}
+
+    def as_int(name, default, minimum=1, maximum=400):
+        try:
+            value = int(params.get(name, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    def as_float(name, default, minimum=0, maximum=100):
+        try:
+            value = float(params.get(name, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    if strategy_name == "moving_average":
+        return {"fastMa": as_int("fastMa", 5), "slowMa": as_int("slowMa", 20)}
+    if strategy_name == "rsi":
+        return {
+            "period": as_int("period", 14),
+            "oversold": as_float("oversold", 30),
+            "overbought": as_float("overbought", 70),
+        }
+    if strategy_name == "macd":
+        return {"fast": as_int("fast", 12), "slow": as_int("slow", 26), "signal": as_int("signal", 9)}
+    return {}
+
+
+def calculate_max_drawdown(equity_values):
+    peak = None
+    max_drawdown = 0
+    for value in equity_values:
+        if peak is None or value > peak:
+            peak = value
+        if peak and peak > 0:
+            drawdown = (peak - value) / peak * 100
+            max_drawdown = max(max_drawdown, drawdown)
+    return max_drawdown
+
+
+def run_strategy_backtest(strategy_name, symbol, points, params):
+    starting_cash = 100000.0
+    cash = starting_cash
+    qty = 0.0
+    entry_value = 0.0
+    closed_pnls = []
+    trade_count = 0
+    equity_curve = []
+
+    for index, point in enumerate(points):
+        price = float(point["p"])
+        if price <= 0:
+            continue
+        history = points[: index + 1]
+        signal = strategy_engine.generate_signal(
+            strategy_name,
+            symbol,
+            {"symbol": symbol, "price": price, "history": history, "params": params},
+        )
+        if signal["signal"] == "BUY" and qty <= 0 and cash > 0:
+            qty = cash / price
+            entry_value = cash
+            cash = 0.0
+            trade_count += 1
+        elif signal["signal"] == "SELL" and qty > 0:
+            exit_value = qty * price
+            cash = exit_value
+            qty = 0.0
+            closed_pnls.append(exit_value - entry_value)
+            entry_value = 0.0
+            trade_count += 1
+        equity = cash + qty * price
+        equity_curve.append({"time": point["t"], "equity": equity})
+
+    if not equity_curve:
+        raise ValueError("Backtest has no usable price points")
+
+    end_price = float(points[-1]["p"])
+    final_equity = cash + qty * end_price
+    return_pct = (final_equity - starting_cash) / starting_cash * 100
+    start_time = datetime.fromtimestamp(points[0]["t"] / 1000, tz=timezone.utc)
+    end_time = datetime.fromtimestamp(points[-1]["t"] / 1000, tz=timezone.utc)
+    days = max((end_time - start_time).total_seconds() / 86400, 1)
+    annual_return = ((final_equity / starting_cash) ** (365 / days) - 1) * 100 if final_equity > 0 else -100
+    max_drawdown = calculate_max_drawdown([point["equity"] for point in equity_curve])
+    wins = [pnl for pnl in closed_pnls if pnl > 0]
+    losses = [pnl for pnl in closed_pnls if pnl < 0]
+    win_rate = len(wins) / len(closed_pnls) * 100 if closed_pnls else 0
+    return {
+        "strategy": strategy_name,
+        "symbol": symbol,
+        "startDate": int(start_time.timestamp() * 1000),
+        "endDate": int(end_time.timestamp() * 1000),
+        "returnPct": return_pct,
+        "annualReturnPct": annual_return,
+        "maxDrawdown": max_drawdown,
+        "winRate": win_rate,
+        "tradeCount": trade_count,
+        "avgProfit": (sum(wins) / len(wins)) if wins else 0,
+        "avgLoss": (sum(losses) / len(losses)) if losses else 0,
+        "equityCurve": equity_curve,
+        "params": params,
+    }
 
 
 def decimal_to_json(value):
@@ -327,6 +453,7 @@ class Handler(SimpleHTTPRequestHandler):
         "/api/me": "handle_me",
         "/api/state": "handle_state",
         "/api/strategy/signals": "handle_strategy_signals",
+        "/api/strategy/backtests": "handle_strategy_backtests",
     }
     POST_ROUTES = {
         "/api/auth/register": "handle_register",
@@ -339,6 +466,7 @@ class Handler(SimpleHTTPRequestHandler):
         "/api/watchlist": "handle_add_watchlist",
         "/api/trade": "handle_trade",
         "/api/strategy/run": "handle_run_strategy",
+        "/api/strategy/backtest": "handle_strategy_backtest",
         "/api/history/clear": "handle_clear_history",
     }
     DELETE_ROUTES = {
@@ -670,6 +798,17 @@ class Handler(SimpleHTTPRequestHandler):
                 signal_history = cur.fetchall()
                 cur.execute(
                     """
+                    SELECT id, strategy, symbol, start_date, end_date, return_pct, max_drawdown, win_rate, trade_count, created_at
+                    FROM backtest_history
+                    WHERE user_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 100
+                    """,
+                    (user_id,),
+                )
+                backtest_history = cur.fetchall()
+                cur.execute(
+                    """
                     SELECT
                         COUNT(*) AS total_trades,
                         COALESCE(SUM(CASE WHEN side = 'buy' THEN value ELSE 0 END), 0) AS total_buy_value,
@@ -767,6 +906,21 @@ class Handler(SimpleHTTPRequestHandler):
                 }
                 for row in signal_history
             ],
+            "backtestHistory": [
+                {
+                    "id": row["id"],
+                    "strategy": row["strategy"],
+                    "symbol": row["symbol"],
+                    "startDate": int(row["start_date"].timestamp() * 1000),
+                    "endDate": int(row["end_date"].timestamp() * 1000),
+                    "returnPct": row["return_pct"],
+                    "maxDrawdown": row["max_drawdown"],
+                    "winRate": row["win_rate"],
+                    "tradeCount": row["trade_count"],
+                    "time": int(row["created_at"].timestamp() * 1000),
+                }
+                for row in backtest_history
+            ],
             "stats": {
                 "totalTrades": int(stats["total_trades"] or 0),
                 "winRate": (winning_sells / sell_count * 100) if sell_count else 0,
@@ -816,6 +970,44 @@ class Handler(SimpleHTTPRequestHandler):
                     for row in rows
                 ],
                 "strategies": strategy_engine.available_strategies(),
+            },
+        )
+
+    def handle_strategy_backtests(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, strategy, symbol, start_date, end_date, return_pct, max_drawdown, win_rate, trade_count, created_at
+                    FROM backtest_history
+                    WHERE user_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 100
+                    """,
+                    (user["id"],),
+                )
+                rows = cur.fetchall()
+        self.end_json(
+            200,
+            {
+                "backtests": [
+                    {
+                        "id": row["id"],
+                        "strategy": row["strategy"],
+                        "symbol": row["symbol"],
+                        "startDate": int(row["start_date"].timestamp() * 1000),
+                        "endDate": int(row["end_date"].timestamp() * 1000),
+                        "returnPct": row["return_pct"],
+                        "maxDrawdown": row["max_drawdown"],
+                        "winRate": row["win_rate"],
+                        "tradeCount": row["trade_count"],
+                        "time": int(row["created_at"].timestamp() * 1000),
+                    }
+                    for row in rows
+                ],
             },
         )
 
@@ -925,6 +1117,7 @@ class Handler(SimpleHTTPRequestHandler):
         data = self.read_json()
         symbol = normalize_market_symbol(data.get("symbol") or "")
         strategy_name = (data.get("strategyName") or "moving_average").strip()
+        params = clean_strategy_params(strategy_name, data.get("params") or {})
         if not symbol:
             self.end_json(400, {"error": "Missing symbol."})
             return
@@ -939,6 +1132,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "price": quote_data["price"],
                 "quote": quote_data,
                 "history": history_data.get("points") or [],
+                "params": params,
             }
             signal = strategy_engine.generate_signal(strategy_name, symbol, market_data)
         except (HTTPError, URLError, TimeoutError, ValueError) as error:
@@ -973,8 +1167,58 @@ class Handler(SimpleHTTPRequestHandler):
             "reason": signal["reason"],
             "price": signal["price"],
             "time": int(row["created_at"].timestamp() * 1000),
+            "params": params,
         }
         self.end_json(200, {"signal": signal_payload, "state": self.load_state(user["id"])})
+
+    def handle_strategy_backtest(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        data = self.read_json()
+        symbol = normalize_market_symbol(data.get("symbol") or "")
+        strategy_name = (data.get("strategyName") or "moving_average").strip()
+        range_key = data.get("range") or "3mo"
+        params = clean_strategy_params(strategy_name, data.get("params") or {})
+        if not symbol:
+            self.end_json(400, {"error": "Missing symbol."})
+            return
+        if range_key not in BACKTEST_RANGES:
+            self.end_json(400, {"error": "Invalid backtest range."})
+            return
+        try:
+            points = normalize_backtest_history(symbol, range_key)
+            result = run_strategy_backtest(strategy_name, symbol, points, params)
+        except (HTTPError, URLError, TimeoutError, ValueError) as error:
+            self.end_json(502, {"error": f"Backtest failed: {error}"})
+            return
+
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO backtest_history
+                        (user_id, strategy, symbol, start_date, end_date, return_pct, max_drawdown, win_rate, trade_count)
+                    VALUES (%s, %s, %s, to_timestamp(%s), to_timestamp(%s), %s, %s, %s, %s)
+                    RETURNING id, created_at
+                    """,
+                    (
+                        user["id"],
+                        strategy_name,
+                        symbol,
+                        result["startDate"] / 1000,
+                        result["endDate"] / 1000,
+                        Decimal(str(result["returnPct"])),
+                        Decimal(str(result["maxDrawdown"])),
+                        Decimal(str(result["winRate"])),
+                        int(result["tradeCount"]),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        result["id"] = row["id"]
+        result["createdAt"] = int(row["created_at"].timestamp() * 1000)
+        self.end_json(200, {"backtest": result, "state": self.load_state(user["id"])})
 
     def handle_trade(self, parsed):
         user = self.require_user()

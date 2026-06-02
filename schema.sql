@@ -135,6 +135,20 @@ CREATE TABLE IF NOT EXISTS signal_history (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS backtest_history (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    strategy TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    start_date TIMESTAMPTZ NOT NULL,
+    end_date TIMESTAMPTZ NOT NULL,
+    return_pct NUMERIC(20, 8) NOT NULL DEFAULT 0,
+    max_drawdown NUMERIC(20, 8) NOT NULL DEFAULT 0,
+    win_rate NUMERIC(20, 8) NOT NULL DEFAULT 0,
+    trade_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
@@ -143,3 +157,5 @@ CREATE INDEX IF NOT EXISTS idx_transactions_user_created ON account_transactions
 CREATE INDEX IF NOT EXISTS idx_equity_history_user_created ON equity_history(user_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_daily_snapshots_user_date ON daily_snapshots(user_id, snapshot_date ASC);
 CREATE INDEX IF NOT EXISTS idx_signal_history_user_created ON signal_history(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_backtest_history_user_created ON backtest_history(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_backtest_history_user_return ON backtest_history(user_id, return_pct DESC);
