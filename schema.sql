@@ -124,6 +124,17 @@ CREATE TABLE IF NOT EXISTS daily_snapshots (
     UNIQUE (user_id, snapshot_date)
 );
 
+CREATE TABLE IF NOT EXISTS signal_history (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    symbol TEXT NOT NULL,
+    strategy_name TEXT NOT NULL,
+    signal TEXT NOT NULL CHECK (signal IN ('BUY', 'SELL', 'HOLD')),
+    reason TEXT NOT NULL,
+    price NUMERIC(20, 8) NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
@@ -131,3 +142,4 @@ CREATE INDEX IF NOT EXISTS idx_trades_user_executed ON trades(user_id, executed_
 CREATE INDEX IF NOT EXISTS idx_transactions_user_created ON account_transactions(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_equity_history_user_created ON equity_history(user_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_daily_snapshots_user_date ON daily_snapshots(user_id, snapshot_date ASC);
+CREATE INDEX IF NOT EXISTS idx_signal_history_user_created ON signal_history(user_id, created_at DESC);

@@ -44,7 +44,11 @@ const els = {
   notionalInput: document.querySelector("#notionalInput"),
   tradeBtn: document.querySelector("#tradeBtn"),
   tradeHint: document.querySelector("#tradeHint"),
+  strategyHint: document.querySelector("#strategyHint"),
+  strategySelect: document.querySelector("#strategySelect"),
+  runStrategyBtn: document.querySelector("#runStrategyBtn"),
   tradingStockBody: document.querySelector("#tradingStockBody"),
+  signalHistoryBody: document.querySelector("#signalHistoryBody"),
   positions: document.querySelector("#positions"),
   historyBody: document.querySelector("#historyBody"),
   clearHistoryBtn: document.querySelector("#clearHistoryBtn"),
@@ -134,6 +138,7 @@ function emptyState() {
     deposits: [],
     equityHistory: [],
     dailySnapshots: [],
+    signalHistory: [],
     stats: {
       totalTrades: 0,
       winRate: 0,
@@ -364,6 +369,7 @@ function render() {
   renderTradingStocks();
   renderPositions();
   renderHistory();
+  renderSignalHistory();
   renderEquityChart();
 }
 
@@ -789,6 +795,7 @@ function setSide(side) {
 function setHint(message) {
   els.tradeHint.textContent = message;
   if (els.settingsHint) els.settingsHint.textContent = message;
+  if (els.strategyHint) els.strategyHint.textContent = message;
 }
 
 function setPage(page) {
@@ -927,6 +934,44 @@ async function clearHistory() {
   }
 }
 
+function renderSignalHistory() {
+  if (!els.signalHistoryBody) return;
+  const signals = state.signalHistory || [];
+  if (!signals.length) {
+    els.signalHistoryBody.innerHTML = `<tr><td colspan="7">\u6682\u65e0\u7b56\u7565\u4fe1\u53f7</td></tr>`;
+    return;
+  }
+  els.signalHistoryBody.innerHTML = signals.slice(0, 100).map((item) => `
+    <tr>
+      <td>${item.id}</td>
+      <td>${fmtDateTime(item.time)}</td>
+      <td>${item.symbol}</td>
+      <td>${item.strategyName}</td>
+      <td class="${item.signal === "BUY" ? "up" : item.signal === "SELL" ? "down" : ""}">${item.signal}</td>
+      <td>${fmtMoney(item.price)}</td>
+      <td>${item.reason}</td>
+    </tr>
+  `).join("");
+}
+
+async function runStrategySignal() {
+  if (!currentUser) {
+    setHint(text.loginRequired);
+    return;
+  }
+  const strategyName = els.strategySelect.value;
+  const symbol = state.activeSymbol;
+  setHint(`Running ${strategyName} on ${symbol}...`);
+  try {
+    const data = await apiPost("/api/strategy/run", { strategyName, symbol });
+    mergeServerState(data.state);
+    setHint(`${data.signal.strategyName} ${data.signal.symbol}: ${data.signal.signal} - ${data.signal.reason}`);
+    render();
+  } catch (error) {
+    setHint(error.message);
+  }
+}
+
 function csvCell(value) {
   const textValue = String(value ?? "");
   return `"${textValue.replace(/"/g, '""')}"`;
@@ -1035,6 +1080,7 @@ els.depositInput.addEventListener("keydown", (event) => {
 els.resetBtn.addEventListener("click", resetAccount);
 els.clearHistoryBtn.addEventListener("click", clearHistory);
 els.exportTradesBtn.addEventListener("click", exportTrades);
+els.runStrategyBtn.addEventListener("click", runStrategySignal);
 els.changePasswordBtn.addEventListener("click", changePassword);
 els.newPasswordInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") changePassword();

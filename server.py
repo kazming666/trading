@@ -15,6 +15,8 @@ import secrets
 import threading
 import time
 
+import strategy_engine
+
 try:
     import psycopg
     from psycopg.rows import dict_row
@@ -324,6 +326,7 @@ class Handler(SimpleHTTPRequestHandler):
         "/api/health": "handle_health",
         "/api/me": "handle_me",
         "/api/state": "handle_state",
+        "/api/strategy/signals": "handle_strategy_signals",
     }
     POST_ROUTES = {
         "/api/auth/register": "handle_register",
@@ -335,6 +338,7 @@ class Handler(SimpleHTTPRequestHandler):
         "/api/account/active-symbol": "handle_active_symbol",
         "/api/watchlist": "handle_add_watchlist",
         "/api/trade": "handle_trade",
+        "/api/strategy/run": "handle_run_strategy",
         "/api/history/clear": "handle_clear_history",
     }
     DELETE_ROUTES = {
@@ -655,6 +659,17 @@ class Handler(SimpleHTTPRequestHandler):
                 daily_snapshots = cur.fetchall()
                 cur.execute(
                     """
+                    SELECT id, symbol, strategy_name, signal, reason, price, created_at
+                    FROM signal_history
+                    WHERE user_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 100
+                    """,
+                    (user_id,),
+                )
+                signal_history = cur.fetchall()
+                cur.execute(
+                    """
                     SELECT
                         COUNT(*) AS total_trades,
                         COALESCE(SUM(CASE WHEN side = 'buy' THEN value ELSE 0 END), 0) AS total_buy_value,
@@ -740,6 +755,18 @@ class Handler(SimpleHTTPRequestHandler):
                 }
                 for row in daily_snapshots
             ],
+            "signalHistory": [
+                {
+                    "id": row["id"],
+                    "symbol": row["symbol"],
+                    "strategyName": row["strategy_name"],
+                    "signal": row["signal"],
+                    "reason": row["reason"],
+                    "price": row["price"],
+                    "time": int(row["created_at"].timestamp() * 1000),
+                }
+                for row in signal_history
+            ],
             "stats": {
                 "totalTrades": int(stats["total_trades"] or 0),
                 "winRate": (winning_sells / sell_count * 100) if sell_count else 0,
@@ -755,6 +782,42 @@ class Handler(SimpleHTTPRequestHandler):
         if not user:
             return
         self.end_json(200, {"user": dict(user), "state": self.load_state(user["id"])})
+
+    def handle_strategy_signals(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, symbol, strategy_name, signal, reason, price, created_at
+                    FROM signal_history
+                    WHERE user_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 100
+                    """,
+                    (user["id"],),
+                )
+                rows = cur.fetchall()
+        self.end_json(
+            200,
+            {
+                "signals": [
+                    {
+                        "id": row["id"],
+                        "symbol": row["symbol"],
+                        "strategyName": row["strategy_name"],
+                        "signal": row["signal"],
+                        "reason": row["reason"],
+                        "price": row["price"],
+                        "time": int(row["created_at"].timestamp() * 1000),
+                    }
+                    for row in rows
+                ],
+                "strategies": strategy_engine.available_strategies(),
+            },
+        )
 
     def handle_deposit(self, parsed):
         user = self.require_user()
@@ -854,6 +917,64 @@ class Handler(SimpleHTTPRequestHandler):
                 cur.execute("UPDATE accounts SET active_symbol = %s, updated_at = now() WHERE user_id = %s", (next_symbol["symbol"], user["id"]))
             conn.commit()
         self.end_json(200, {"state": self.load_state(user["id"])})
+
+    def handle_run_strategy(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        data = self.read_json()
+        symbol = normalize_market_symbol(data.get("symbol") or "")
+        strategy_name = (data.get("strategyName") or "moving_average").strip()
+        if not symbol:
+            self.end_json(400, {"error": "Missing symbol."})
+            return
+        try:
+            quote_data = normalize_quote(symbol)
+            try:
+                history_data = normalize_history(symbol, "1mo")
+            except Exception:
+                history_data = {"points": []}
+            market_data = {
+                "symbol": symbol,
+                "price": quote_data["price"],
+                "quote": quote_data,
+                "history": history_data.get("points") or [],
+            }
+            signal = strategy_engine.generate_signal(strategy_name, symbol, market_data)
+        except (HTTPError, URLError, TimeoutError, ValueError) as error:
+            self.end_json(502, {"error": f"Strategy signal failed: {error}"})
+            return
+
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO signal_history (user_id, symbol, strategy_name, signal, reason, price)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id, created_at
+                    """,
+                    (
+                        user["id"],
+                        symbol,
+                        strategy_name,
+                        signal["signal"],
+                        signal["reason"],
+                        Decimal(str(signal["price"])),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+
+        signal_payload = {
+            "id": row["id"],
+            "symbol": symbol,
+            "strategyName": strategy_name,
+            "signal": signal["signal"],
+            "reason": signal["reason"],
+            "price": signal["price"],
+            "time": int(row["created_at"].timestamp() * 1000),
+        }
+        self.end_json(200, {"signal": signal_payload, "state": self.load_state(user["id"])})
 
     def handle_trade(self, parsed):
         user = self.require_user()

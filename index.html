@@ -26,6 +26,7 @@
         <button type="button" data-page="trading" onclick="window.setPage('trading')">Trading</button>
         <button type="button" data-page="portfolio" onclick="window.setPage('portfolio')">Portfolio</button>
         <button type="button" data-page="history" onclick="window.setPage('history')">History</button>
+        <button type="button" data-page="signals" onclick="window.setPage('signals')">Signals</button>
         <button type="button" data-page="watchlist" onclick="window.setPage('watchlist')">Watchlist</button>
         <button type="button" data-page="settings" onclick="window.setPage('settings')">Settings</button>
       </nav>
@@ -259,6 +260,42 @@
         </section>
       </section>
 
+      <section class="page-view" data-view="signals">
+        <section class="history-panel">
+          <div class="panel-head">
+            <div>
+              <h2>&#31574;&#30053;&#20449;&#21495;</h2>
+              <p class="mini-note">&#25163;&#21160;&#36816;&#34892;&#31574;&#30053;&#20165;&#29983;&#25104;&#20449;&#21495;&#24182;&#20889;&#20837;&#25968;&#25454;&#24211;&#65292;&#26242;&#19981;&#33258;&#21160;&#19979;&#21333;&#12290;</p>
+            </div>
+            <div class="strategy-controls">
+              <select id="strategySelect" aria-label="strategy">
+                <option value="moving_average">Moving Average</option>
+                <option value="rsi">RSI</option>
+                <option value="macd">MACD</option>
+              </select>
+              <button id="runStrategyBtn" class="primary-action" type="button">&#36816;&#34892;&#31574;&#30053;</button>
+            </div>
+          </div>
+          <p id="strategyHint" class="trade-hint"></p>
+          <div class="table-wrap">
+            <table class="signal-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>&#26102;&#38388;</th>
+                  <th>&#32929;&#31080;</th>
+                  <th>&#31574;&#30053;</th>
+                  <th>&#20449;&#21495;</th>
+                  <th>&#20215;&#26684;</th>
+                  <th>&#21407;&#22240;</th>
+                </tr>
+              </thead>
+              <tbody id="signalHistoryBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
       <section class="page-view" data-view="settings">
         <section class="settings-grid">
           <div class="history-panel">
@@ -302,6 +339,6 @@
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="app.js?v=20260602k"></script>
+    <script src="app.js?v=20260602l"></script>
   </body>
 </html>
