@@ -1778,6 +1778,7 @@ class Handler(SimpleHTTPRequestHandler):
                     (user_id,),
                 )
                 stats = cur.fetchone()
+            auto_trading = auto_trading_stats(conn, user_id)
         sell_count = int(stats["sell_count"] or 0)
         winning_sells = int(stats["winning_sells"] or 0)
         starting_cash = account["starting_cash"] or Decimal("0")
@@ -1892,7 +1893,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "totalBuyValue": stats["total_buy_value"] or 0,
                 "totalSellValue": stats["total_sell_value"] or 0,
             },
-            "autoTrading": auto_trading_stats(conn, user_id),
+            "autoTrading": auto_trading,
         }
 
     def handle_state(self, parsed):
