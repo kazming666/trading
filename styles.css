@@ -316,8 +316,39 @@ label,
 
 .strategy-param-panel {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.strategy-param-panel[hidden] {
+  display: none;
+}
+
+.param-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.param-field span {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.param-field small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.param-field input {
+  margin-top: 2px;
+  background: #fbfcfb;
 }
 
 .backtest-metrics {

@@ -91,7 +91,7 @@ The Signals page can backtest `AAPL`, `MSFT`, `NVDA`, `TSLA`, `AMZN`, `META`, `G
 - 6 months
 - 1 year
 
-The server reads historical prices from the existing market data source, calls the shared strategy engine at the configured signal frequency, and simulates a dedicated paper backtest account:
+The server reads historical prices from the existing market data source, calls the shared strategy engine across the historical price series, and simulates a dedicated paper backtest account:
 
 - initial cash: `100000`
 - `BUY`: all-in buy

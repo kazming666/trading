@@ -300,21 +300,50 @@
             <section class="quant-card">
               <h3>&#31574;&#30053;&#21442;&#25968;</h3>
               <div id="movingAverageParams" class="strategy-param-panel">
-                <label>Fast MA <input id="maFastInput" type="number" min="1" step="1" value="5"></label>
-                <label>Slow MA <input id="maSlowInput" type="number" min="2" step="1" value="20"></label>
-                <label>&#20132;&#26131;&#39057;&#29575; <input id="strategyFrequencyInput" type="number" min="1" max="60" step="1" value="1"></label>
+                <label class="param-field">
+                  <span>Fast MA</span>
+                  <small>&#30701;&#21608;&#26399;&#22343;&#32447;&#65288;&#21333;&#20301;&#65306;&#20132;&#26131;&#26085;&#65289;</small>
+                  <input id="maFastInput" type="number" min="1" step="1" value="5">
+                </label>
+                <label class="param-field">
+                  <span>Slow MA</span>
+                  <small>&#38271;&#21608;&#26399;&#22343;&#32447;&#65288;&#21333;&#20301;&#65306;&#20132;&#26131;&#26085;&#65289;</small>
+                  <input id="maSlowInput" type="number" min="2" step="1" value="20">
+                </label>
               </div>
               <div id="rsiParams" class="strategy-param-panel" hidden>
-                <label>Period <input id="rsiPeriodInput" type="number" min="2" step="1" value="14"></label>
-                <label>Oversold <input id="rsiOversoldInput" type="number" min="1" max="50" step="1" value="30"></label>
-                <label>Overbought <input id="rsiOverboughtInput" type="number" min="50" max="99" step="1" value="70"></label>
-                <label>&#20132;&#26131;&#39057;&#29575; <input id="rsiFrequencyInput" type="number" min="1" max="60" step="1" value="1"></label>
+                <label class="param-field">
+                  <span>Period</span>
+                  <small>RSI&#35745;&#31639;&#21608;&#26399;&#65288;&#21333;&#20301;&#65306;&#20132;&#26131;&#26085;&#65289;</small>
+                  <input id="rsiPeriodInput" type="number" min="2" step="1" value="14">
+                </label>
+                <label class="param-field">
+                  <span>Oversold</span>
+                  <small>&#36229;&#21334;&#38408;&#20540;&#65288;&#40664;&#35748;30&#65289;</small>
+                  <input id="rsiOversoldInput" type="number" min="1" max="50" step="1" value="30">
+                </label>
+                <label class="param-field">
+                  <span>Overbought</span>
+                  <small>&#36229;&#20080;&#38408;&#20540;&#65288;&#40664;&#35748;70&#65289;</small>
+                  <input id="rsiOverboughtInput" type="number" min="50" max="99" step="1" value="70">
+                </label>
               </div>
               <div id="macdParams" class="strategy-param-panel" hidden>
-                <label>Fast <input id="macdFastInput" type="number" min="1" step="1" value="12"></label>
-                <label>Slow <input id="macdSlowInput" type="number" min="2" step="1" value="26"></label>
-                <label>Signal <input id="macdSignalInput" type="number" min="1" step="1" value="9"></label>
-                <label>&#20132;&#26131;&#39057;&#29575; <input id="macdFrequencyInput" type="number" min="1" max="60" step="1" value="1"></label>
+                <label class="param-field">
+                  <span>Fast</span>
+                  <small>MACD&#24555;&#36895;EMA&#21608;&#26399;</small>
+                  <input id="macdFastInput" type="number" min="1" step="1" value="12">
+                </label>
+                <label class="param-field">
+                  <span>Slow</span>
+                  <small>MACD&#24930;&#36895;EMA&#21608;&#26399;</small>
+                  <input id="macdSlowInput" type="number" min="2" step="1" value="26">
+                </label>
+                <label class="param-field">
+                  <span>Signal</span>
+                  <small>MACD&#20449;&#21495;&#32447;&#21608;&#26399;</small>
+                  <input id="macdSignalInput" type="number" min="1" step="1" value="9">
+                </label>
               </div>
             </section>
             <section class="quant-card">
@@ -491,6 +520,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260603a"></script>
+    <script src="app.js?v=20260603b"></script>
   </body>
 </html>

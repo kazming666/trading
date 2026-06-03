@@ -56,15 +56,12 @@ const els = {
   macdParams: document.querySelector("#macdParams"),
   maFastInput: document.querySelector("#maFastInput"),
   maSlowInput: document.querySelector("#maSlowInput"),
-  strategyFrequencyInput: document.querySelector("#strategyFrequencyInput"),
   rsiPeriodInput: document.querySelector("#rsiPeriodInput"),
   rsiOversoldInput: document.querySelector("#rsiOversoldInput"),
   rsiOverboughtInput: document.querySelector("#rsiOverboughtInput"),
-  rsiFrequencyInput: document.querySelector("#rsiFrequencyInput"),
   macdFastInput: document.querySelector("#macdFastInput"),
   macdSlowInput: document.querySelector("#macdSlowInput"),
   macdSignalInput: document.querySelector("#macdSignalInput"),
-  macdFrequencyInput: document.querySelector("#macdFrequencyInput"),
   backtestReturn: document.querySelector("#backtestReturn"),
   backtestAnnualReturn: document.querySelector("#backtestAnnualReturn"),
   backtestDrawdown: document.querySelector("#backtestDrawdown"),
@@ -1008,32 +1005,23 @@ function currentStrategySymbol() {
 
 function strategyParams() {
   const strategyName = els.strategySelect.value;
-  const frequencyInput = strategyName === "rsi"
-    ? els.rsiFrequencyInput
-    : strategyName === "macd"
-      ? els.macdFrequencyInput
-      : els.strategyFrequencyInput;
-  const frequencyBars = Math.max(1, Number(frequencyInput?.value || 1));
   if (strategyName === "moving_average") {
     return {
       fastMa: Number(els.maFastInput.value || 5),
-      slowMa: Number(els.maSlowInput.value || 20),
-      frequencyBars
+      slowMa: Number(els.maSlowInput.value || 20)
     };
   }
   if (strategyName === "rsi") {
     return {
       period: Number(els.rsiPeriodInput.value || 14),
       oversold: Number(els.rsiOversoldInput.value || 30),
-      overbought: Number(els.rsiOverboughtInput.value || 70),
-      frequencyBars
+      overbought: Number(els.rsiOverboughtInput.value || 70)
     };
   }
   return {
     fast: Number(els.macdFastInput.value || 12),
     slow: Number(els.macdSlowInput.value || 26),
-    signal: Number(els.macdSignalInput.value || 9),
-    frequencyBars
+    signal: Number(els.macdSignalInput.value || 9)
   };
 }
 
