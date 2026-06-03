@@ -48,6 +48,8 @@ const els = {
   strategySymbolInput: document.querySelector("#strategySymbolInput"),
   strategySelect: document.querySelector("#strategySelect"),
   backtestRangeSelect: document.querySelector("#backtestRangeSelect"),
+  backtestStartDateInput: document.querySelector("#backtestStartDateInput"),
+  backtestEndDateInput: document.querySelector("#backtestEndDateInput"),
   runStrategyBtn: document.querySelector("#runStrategyBtn"),
   backtestStrategyBtn: document.querySelector("#backtestStrategyBtn"),
   optimizeStrategyBtn: document.querySelector("#optimizeStrategyBtn"),
@@ -62,7 +64,10 @@ const els = {
   macdFastInput: document.querySelector("#macdFastInput"),
   macdSlowInput: document.querySelector("#macdSlowInput"),
   macdSignalInput: document.querySelector("#macdSignalInput"),
+  backtestPeriod: document.querySelector("#backtestPeriod"),
   backtestReturn: document.querySelector("#backtestReturn"),
+  backtestBuyHoldReturn: document.querySelector("#backtestBuyHoldReturn"),
+  backtestAlpha: document.querySelector("#backtestAlpha"),
   backtestAnnualReturn: document.querySelector("#backtestAnnualReturn"),
   backtestDrawdown: document.querySelector("#backtestDrawdown"),
   backtestWinRate: document.querySelector("#backtestWinRate"),
@@ -204,6 +209,13 @@ function fmtDateTime(value) {
 function fmtDate(value) {
   if (!value) return "--";
   return new Date(value).toLocaleDateString("zh-CN");
+}
+
+function isoDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
 }
 
 function percentText(value) {
@@ -1025,6 +1037,13 @@ function strategyParams() {
   };
 }
 
+function backtestDatePayload() {
+  return {
+    startDate: els.backtestStartDateInput?.value || "",
+    endDate: els.backtestEndDateInput?.value || ""
+  };
+}
+
 function renderStrategyControls() {
   if (!els.strategySelect) return;
   const strategyName = els.strategySelect.value;
@@ -1039,13 +1058,20 @@ function renderStrategyControls() {
 function renderBacktestSummary(result) {
   const hasResult = Boolean(result);
   const returnPct = Number(result?.returnPct || 0);
+  const buyHoldReturnPct = Number(result?.buyHoldReturnPct || 0);
+  const alphaPct = Number(result?.alphaPct || 0);
   const annualReturnPct = Number(result?.annualReturnPct || 0);
   const drawdown = Number(result?.maxDrawdown || 0);
   const winRate = Number(result?.winRate || 0);
   const avgProfit = Number(result?.avgProfit || 0);
   const avgLoss = Number(result?.avgLoss || 0);
+  els.backtestPeriod.textContent = hasResult ? `${isoDate(result.startDate)} ~ ${isoDate(result.endDate)}` : "--";
   els.backtestReturn.textContent = hasResult ? percentText(returnPct) : "--";
   els.backtestReturn.className = returnPct >= 0 ? "up" : "down";
+  els.backtestBuyHoldReturn.textContent = hasResult ? percentText(buyHoldReturnPct) : "--";
+  els.backtestBuyHoldReturn.className = buyHoldReturnPct >= 0 ? "up" : "down";
+  els.backtestAlpha.textContent = hasResult ? percentText(alphaPct) : "--";
+  els.backtestAlpha.className = alphaPct >= 0 ? "up" : "down";
   els.backtestAnnualReturn.textContent = hasResult ? percentText(annualReturnPct) : "--";
   els.backtestAnnualReturn.className = annualReturnPct >= 0 ? "up" : "down";
   els.backtestDrawdown.textContent = hasResult ? percentText(drawdown) : "--";
@@ -1084,24 +1110,36 @@ function renderBacktestRanking() {
 function renderBacktestChart(points = []) {
   if (!els.backtestEquityChart || !window.Chart) return;
   const chartPoints = points
-    .map((point) => ({ time: Number(point.time), equity: Number(point.equity) }))
+    .map((point) => ({ time: Number(point.time), equity: Number(point.equity), buyHoldEquity: Number(point.buyHoldEquity) }))
     .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.equity));
   const labels = chartPoints.map((point) => fmtDate(point.time));
   const values = chartPoints.map((point) => point.equity);
+  const buyHoldValues = chartPoints.map((point) => Number.isFinite(point.buyHoldEquity) ? point.buyHoldEquity : null);
   if (!backtestEquityChart) {
     backtestEquityChart = new Chart(els.backtestEquityChart, {
       type: "line",
       data: {
         labels,
-        datasets: [{
-          label: "\u8d44\u91d1\u66f2\u7ebf",
-          data: values,
-          borderColor: "#167f55",
-          backgroundColor: "rgba(22, 127, 85, 0.12)",
-          fill: true,
-          tension: 0.22,
-          pointRadius: 1.5
-        }]
+        datasets: [
+          {
+            label: "Strategy Equity Curve",
+            data: values,
+            borderColor: "#167f55",
+            backgroundColor: "rgba(22, 127, 85, 0.12)",
+            fill: true,
+            tension: 0.22,
+            pointRadius: 1.5
+          },
+          {
+            label: "Buy & Hold Curve",
+            data: buyHoldValues,
+            borderColor: "#b7791f",
+            backgroundColor: "rgba(183, 121, 31, 0.08)",
+            fill: false,
+            tension: 0.22,
+            pointRadius: 1.5
+          }
+        ]
       },
       options: {
         responsive: true,
@@ -1131,6 +1169,7 @@ function renderBacktestChart(points = []) {
   }
   backtestEquityChart.data.labels = labels;
   backtestEquityChart.data.datasets[0].data = values;
+  backtestEquityChart.data.datasets[1].data = buyHoldValues;
   backtestEquityChart.update();
 }
 
@@ -1226,7 +1265,7 @@ async function runStrategyBacktest() {
   const params = strategyParams();
   setHint(`Backtesting ${strategyName} on ${symbol}...`);
   try {
-    const data = await apiPost("/api/strategy/backtest", { strategyName, symbol, range, params });
+    const data = await apiPost("/api/strategy/backtest", { strategyName, symbol, range, params, ...backtestDatePayload() });
     mergeServerState(data.state);
     latestBacktest = data.backtest;
     setHint(`Backtest saved: ${strategyName} ${symbol}, return ${percentText(data.backtest.returnPct)}.`);
@@ -1247,7 +1286,7 @@ async function optimizeStrategyParams() {
   const params = strategyParams();
   setHint(`Optimizing ${strategyName} on ${symbol}...`);
   try {
-    const data = await apiPost("/api/strategy/optimize", { strategyName, symbol, range, params });
+    const data = await apiPost("/api/strategy/optimize", { strategyName, symbol, range, params, ...backtestDatePayload() });
     latestOptimization = data.optimization;
     setHint(`Optimization complete: ${latestOptimization.combinations} combinations in ${number.format(latestOptimization.runtimeMs || 0)} ms.`);
     render();

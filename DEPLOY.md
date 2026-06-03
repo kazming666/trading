@@ -86,10 +86,13 @@ Signals are written to PostgreSQL in `signal_history`. They do not place orders.
 
 The Signals page can backtest `AAPL`, `MSFT`, `NVDA`, `TSLA`, `AMZN`, `META`, `GOOGL`, `AMD`, or any user-entered Yahoo Finance compatible symbol over:
 
-- 1 month
-- 3 months
-- 6 months
 - 1 year
+- 3 years
+- 5 years
+- 10 years
+- all historical data
+
+Users can also select a start date and end date. When both dates are provided, the custom date range takes priority over the preset range.
 
 The server reads historical prices from the existing market data source, calls the shared strategy engine across the historical price series, and simulates a dedicated paper backtest account:
 
@@ -101,6 +104,8 @@ The server reads historical prices from the existing market data source, calls t
 It does not touch the user's live simulated trading account balance or holdings. The engine calculates:
 
 - total return
+- Buy & Hold return
+- Alpha
 - annualized return
 - maximum drawdown
 - Sharpe ratio
@@ -109,7 +114,7 @@ It does not touch the user's live simulated trading account balance or holdings.
 - average profit
 - average loss
 
-New runs are saved in `backtest_results`; older `backtest_history` rows remain visible in rankings for compatibility. The latest run returns an equity curve and trade list to the browser, and the page draws the curve with Chart.js zoom/pan support. The ranking table sorts saved backtests by return percentage.
+New runs are saved in `backtest_results`; older `backtest_history` rows remain visible in rankings for compatibility. The latest run returns strategy and Buy & Hold equity curves plus a trade list to the browser, and the page draws both curves with Chart.js zoom/pan support. The ranking table sorts saved backtests by return percentage.
 
 ## Parameter Optimizer
 

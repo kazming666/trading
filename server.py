@@ -3,7 +3,7 @@ from urllib.parse import parse_qs, urlparse, quote
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import cookies
 from decimal import Decimal
 from pathlib import Path
@@ -37,6 +37,7 @@ DEFAULT_SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "600519.SS", "000001.
 PROJECT_DIR = Path(__file__).resolve().parent
 
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range={range}&interval={interval}"
+YAHOO_CHART_PERIOD = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={period1}&period2={period2}&interval={interval}"
 YAHOO_SEARCH = "https://query1.finance.yahoo.com/v1/finance/search?q={query}&quotesCount=8&newsCount=0"
 HISTORY_RANGES = {
     "1d": ("1d", "1m"),
@@ -47,10 +48,11 @@ HISTORY_RANGES = {
     "1y": ("1y", "1d"),
 }
 BACKTEST_RANGES = {
-    "1mo": ("1mo", "1d"),
-    "3mo": ("3mo", "1d"),
-    "6mo": ("6mo", "1d"),
     "1y": ("1y", "1d"),
+    "3y": ("3y", "1d"),
+    "5y": ("5y", "1d"),
+    "10y": ("10y", "1d"),
+    "max": ("max", "1d"),
 }
 BACKTEST_SYMBOLS = {"AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD"}
 
@@ -83,6 +85,26 @@ def yahoo_chart(symbol, range_value="1d", interval="1m"):
         error = data.get("chart", {}).get("error") or {}
         raise ValueError(error.get("description") or "No quote data returned")
     return result[0]
+
+
+def yahoo_chart_period(symbol, start_date, end_date, interval="1d"):
+    period1 = int(start_date.replace(tzinfo=timezone.utc).timestamp())
+    period2 = int((end_date + timedelta(days=1)).replace(tzinfo=timezone.utc).timestamp())
+    data = fetch_json(YAHOO_CHART_PERIOD.format(symbol=quote(symbol), period1=period1, period2=period2, interval=interval))
+    result = data.get("chart", {}).get("result") or []
+    if not result:
+        error = data.get("chart", {}).get("error") or {}
+        raise ValueError(error.get("description") or "No historical data returned")
+    return result[0]
+
+
+def parse_date_picker(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).replace(hour=0, minute=0, second=0, microsecond=0)
+    except ValueError:
+        return None
 
 
 def candidate_symbols(query):
@@ -138,9 +160,15 @@ def normalize_history(symbol, range_key):
     return {"symbol": symbol.upper(), "range": range_key, "points": points[-360:]}
 
 
-def normalize_backtest_history(symbol, range_key):
-    range_value, interval = BACKTEST_RANGES.get(range_key, BACKTEST_RANGES["3mo"])
-    chart = yahoo_chart(symbol, range_value, interval)
+def normalize_backtest_history(symbol, range_key, start_date=None, end_date=None):
+    interval = "1d"
+    if start_date and end_date:
+        if end_date <= start_date:
+            raise ValueError("End date must be after start date")
+        chart = yahoo_chart_period(symbol, start_date, end_date, interval)
+    else:
+        range_value, interval = BACKTEST_RANGES.get(range_key, BACKTEST_RANGES["1y"])
+        chart = yahoo_chart(symbol, range_value, interval)
     timestamps = chart.get("timestamp") or []
     quote_data = ((chart.get("indicators") or {}).get("quote") or [{}])[0]
     closes = quote_data.get("close") or []
@@ -247,6 +275,8 @@ def summarize_backtest_result(result):
         "symbol": result["symbol"],
         "params": result["params"],
         "returnPct": result["returnPct"],
+        "buyHoldReturnPct": result["buyHoldReturnPct"],
+        "alphaPct": result["alphaPct"],
         "annualReturnPct": result["annualReturnPct"],
         "maxDrawdown": result["maxDrawdown"],
         "winRate": result["winRate"],
@@ -264,6 +294,8 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
     entry = None
     trades = []
     equity_curve = []
+    first_price = float(points[0]["p"])
+    buy_hold_qty = starting_cash / first_price if first_price > 0 else 0
     frequency_bars = max(1, int(params.get("frequencyBars") or 1))
 
     for index, point in enumerate(points):
@@ -307,7 +339,16 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
             qty = 0.0
             entry = None
         equity = cash + qty * price
-        equity_curve.append({"time": point["t"], "equity": equity, "cash": cash, "positionValue": qty * price})
+        buy_hold_equity = buy_hold_qty * price
+        equity_curve.append(
+            {
+                "time": point["t"],
+                "equity": equity,
+                "buyHoldEquity": buy_hold_equity,
+                "cash": cash,
+                "positionValue": qty * price,
+            }
+        )
 
     if not equity_curve:
         raise ValueError("Backtest has no usable price points")
@@ -315,6 +356,9 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
     end_price = float(points[-1]["p"])
     final_equity = cash + qty * end_price
     return_pct = (final_equity - starting_cash) / starting_cash * 100
+    buy_hold_final_equity = buy_hold_qty * end_price
+    buy_hold_return_pct = (buy_hold_final_equity - starting_cash) / starting_cash * 100
+    alpha_pct = return_pct - buy_hold_return_pct
     start_time = datetime.fromtimestamp(points[0]["t"] / 1000, tz=timezone.utc)
     end_time = datetime.fromtimestamp(points[-1]["t"] / 1000, tz=timezone.utc)
     days = max((end_time - start_time).total_seconds() / 86400, 1)
@@ -330,9 +374,12 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
         "symbol": symbol,
         "initialCash": starting_cash,
         "finalEquity": final_equity,
+        "buyHoldFinalEquity": buy_hold_final_equity,
         "startDate": int(start_time.timestamp() * 1000),
         "endDate": int(end_time.timestamp() * 1000),
         "returnPct": return_pct,
+        "buyHoldReturnPct": buy_hold_return_pct,
+        "alphaPct": alpha_pct,
         "annualReturnPct": annual_return,
         "maxDrawdown": max_drawdown,
         "sharpeRatio": sharpe_ratio,
@@ -1360,7 +1407,9 @@ class Handler(SimpleHTTPRequestHandler):
         data = self.read_json()
         symbol = normalize_market_symbol(data.get("symbol") or "")
         strategy_name = (data.get("strategyName") or "moving_average").strip()
-        range_key = data.get("range") or "3mo"
+        range_key = data.get("range") or "1y"
+        start_date = parse_date_picker(data.get("startDate"))
+        end_date = parse_date_picker(data.get("endDate"))
         params = clean_strategy_params(strategy_name, data.get("params") or {})
         if not symbol:
             self.end_json(400, {"error": "Missing symbol."})
@@ -1370,7 +1419,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
         started = time.perf_counter()
         try:
-            points = normalize_backtest_history(symbol, range_key)
+            points = normalize_backtest_history(symbol, range_key, start_date, end_date)
             result = run_strategy_backtest(strategy_name, symbol, points, params)
         except (HTTPError, URLError, TimeoutError, ValueError) as error:
             self.end_json(502, {"error": f"Backtest failed: {error}"})
@@ -1434,7 +1483,9 @@ class Handler(SimpleHTTPRequestHandler):
         data = self.read_json()
         symbol = normalize_market_symbol(data.get("symbol") or "")
         strategy_name = (data.get("strategyName") or "moving_average").strip()
-        range_key = data.get("range") or "3mo"
+        range_key = data.get("range") or "1y"
+        start_date = parse_date_picker(data.get("startDate"))
+        end_date = parse_date_picker(data.get("endDate"))
         base_params = clean_strategy_params(strategy_name, data.get("params") or {})
         if not symbol:
             self.end_json(400, {"error": "Missing symbol."})
@@ -1444,7 +1495,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
         started = time.perf_counter()
         try:
-            points = normalize_backtest_history(symbol, range_key)
+            points = normalize_backtest_history(symbol, range_key, start_date, end_date)
             results = [
                 summarize_backtest_result(run_strategy_backtest(strategy_name, symbol, points, params))
                 for params in optimizer_grid(strategy_name, base_params)

@@ -285,11 +285,14 @@
                 <option value="macd">MACD</option>
               </select>
               <select id="backtestRangeSelect" aria-label="backtest range">
-                <option value="1mo">1&#20010;&#26376;</option>
-                <option value="3mo" selected>3&#20010;&#26376;</option>
-                <option value="6mo">6&#20010;&#26376;</option>
-                <option value="1y">1&#24180;</option>
+                <option value="1y" selected>1&#24180;</option>
+                <option value="3y">3&#24180;</option>
+                <option value="5y">5&#24180;</option>
+                <option value="10y">10&#24180;</option>
+                <option value="max">&#20840;&#37096;&#21382;&#21490;&#25968;&#25454;</option>
               </select>
+              <input id="backtestStartDateInput" type="date" aria-label="backtest start date">
+              <input id="backtestEndDateInput" type="date" aria-label="backtest end date">
               <button id="runStrategyBtn" class="primary-action" type="button">&#36816;&#34892;&#31574;&#30053;</button>
               <button id="backtestStrategyBtn" class="primary-action" type="button">Backtest</button>
               <button id="optimizeStrategyBtn" class="primary-action" type="button">Optimize</button>
@@ -349,7 +352,10 @@
             <section class="quant-card">
               <h3>&#22238;&#27979;&#32467;&#26524;</h3>
               <div class="backtest-metrics">
-                <div><span>&#24635;&#25910;&#30410;&#29575;</span><strong id="backtestReturn">--</strong></div>
+                <div><span>&#22238;&#27979;&#21306;&#38388;</span><strong id="backtestPeriod">--</strong></div>
+                <div><span>&#31574;&#30053;&#25910;&#30410;&#29575;</span><strong id="backtestReturn">--</strong></div>
+                <div><span>Buy &amp; Hold</span><strong id="backtestBuyHoldReturn">--</strong></div>
+                <div><span>Alpha</span><strong id="backtestAlpha">--</strong></div>
                 <div><span>&#24180;&#21270;&#25910;&#30410;&#29575;</span><strong id="backtestAnnualReturn">--</strong></div>
                 <div><span>&#26368;&#22823;&#22238;&#25764;</span><strong id="backtestDrawdown">--</strong></div>
                 <div><span>&#32988;&#29575;</span><strong id="backtestWinRate">--</strong></div>
@@ -520,6 +526,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260603b"></script>
+    <script src="app.js?v=20260603c"></script>
   </body>
 </html>
