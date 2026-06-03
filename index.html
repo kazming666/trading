@@ -14,6 +14,10 @@
           <h1>&#27169;&#25311;&#32929;&#31080;&#20132;&#26131;&#21488;</h1>
         </div>
         <div class="status-strip">
+          <select id="marketSelect" class="market-selector" aria-label="market">
+            <option value="stock">&#32929;&#31080;</option>
+            <option value="crypto">&#34394;&#25311;&#24065;</option>
+          </select>
           <span id="userStatus" class="pill" hidden></span>
           <button id="logoutBtn" class="ghost-btn" type="button" hidden>&#30331;&#20986;</button>
           <span id="feedStatus" class="pill">&#36830;&#25509;&#34892;&#24773;</span>
@@ -278,6 +282,11 @@
                 <option value="META"></option>
                 <option value="GOOGL"></option>
                 <option value="AMD"></option>
+                <option value="BTCUSDT"></option>
+                <option value="ETHUSDT"></option>
+                <option value="SOLUSDT"></option>
+                <option value="BNBUSDT"></option>
+                <option value="DOGEUSDT"></option>
               </datalist>
               <select id="strategySelect" aria-label="strategy">
                 <option value="moving_average">Moving Average</option>
@@ -542,6 +551,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260603d"></script>
+    <script src="app.js?v=20260603e"></script>
   </body>
 </html>

@@ -136,12 +136,18 @@ h3 {
 }
 
 .pill,
-.clock {
+.clock,
+.market-selector {
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: 999px;
   padding: 8px 12px;
   font-weight: 700;
+}
+
+.market-selector {
+  width: auto;
+  min-height: 36px;
 }
 
 .pill.live {

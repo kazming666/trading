@@ -34,11 +34,19 @@ SESSION_COOKIE = "ptd_session"
 SESSION_DAYS = 30
 DEFAULT_CASH = Decimal("100000")
 DEFAULT_SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "600519.SS", "000001.SZ", "0700.HK"]
+CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT"]
 PROJECT_DIR = Path(__file__).resolve().parent
 
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range={range}&interval={interval}"
 YAHOO_CHART_PERIOD = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={period1}&period2={period2}&interval={interval}"
 YAHOO_SEARCH = "https://query1.finance.yahoo.com/v1/finance/search?q={query}&quotesCount=8&newsCount=0"
+BINANCE_BASE_URLS = [
+    "https://data-api.binance.vision",
+    "https://api.binance.com",
+    "https://api1.binance.com",
+    "https://api2.binance.com",
+    "https://api3.binance.com",
+]
 HISTORY_RANGES = {
     "1d": ("1d", "1m"),
     "1wk": ("5d", "5m"),
@@ -78,6 +86,11 @@ def normalize_market_symbol(symbol):
     return normalized
 
 
+def is_crypto_symbol(symbol):
+    normalized = symbol.strip().upper()
+    return normalized in CRYPTO_SYMBOLS or (normalized.endswith("USDT") and "." not in normalized and len(normalized) >= 7)
+
+
 def yahoo_chart(symbol, range_value="1d", interval="1m"):
     data = fetch_json(YAHOO_CHART.format(symbol=quote(symbol), range=range_value, interval=interval))
     result = data.get("chart", {}).get("result") or []
@@ -85,6 +98,104 @@ def yahoo_chart(symbol, range_value="1d", interval="1m"):
         error = data.get("chart", {}).get("error") or {}
         raise ValueError(error.get("description") or "No quote data returned")
     return result[0]
+
+
+def binance_klines(symbol, interval, limit=500, start_time=None, end_time=None):
+    path = f"/api/v3/klines?symbol={quote(symbol)}&interval={interval}&limit={limit}"
+    if start_time is not None and end_time is not None:
+        path = f"{path}&startTime={start_time}&endTime={end_time}"
+    return fetch_binance_json(path)
+
+
+def fetch_binance_json(path):
+    last_error = None
+    for base_url in BINANCE_BASE_URLS:
+        try:
+            return fetch_json(f"{base_url}{path}")
+        except (HTTPError, URLError, TimeoutError, ValueError) as error:
+            last_error = error
+    raise ValueError(f"Binance request failed: {last_error}")
+
+
+def normalize_binance_quote(symbol):
+    data = fetch_binance_json(f"/api/v3/ticker/24hr?symbol={quote(symbol)}")
+    price = float(data["lastPrice"])
+    previous_close = float(data.get("prevClosePrice") or data.get("openPrice") or price)
+    base = symbol[:-4] if symbol.endswith("USDT") else symbol
+    return {
+        "symbol": symbol,
+        "name": f"{base}/USDT",
+        "exchange": "Binance",
+        "currency": "USD",
+        "price": price,
+        "previousClose": previous_close,
+        "regularMarketTime": int(time.time()),
+        "marketState": "24/7",
+    }
+
+
+def normalize_binance_points(rows):
+    points = []
+    for row in rows:
+        open_time, open_price, high, low, close = row[:5]
+        points.append(
+            {
+                "t": int(open_time),
+                "p": float(close),
+                "o": float(open_price),
+                "h": float(high),
+                "l": float(low),
+                "c": float(close),
+            }
+        )
+    return points
+
+
+def crypto_history_window(range_key):
+    now = int(time.time() * 1000)
+    day = 24 * 60 * 60 * 1000
+    days = {"1d": 1, "1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "3y": 365 * 3, "5y": 365 * 5, "10y": 365 * 10}
+    if range_key == "max":
+        return int(datetime(2017, 1, 1, tzinfo=timezone.utc).timestamp() * 1000), now
+    return now - days.get(range_key, 365) * day, now
+
+
+def normalize_binance_history(symbol, range_key):
+    mapping = {
+        "1d": ("5m", 288),
+        "1wk": ("1h", 168),
+        "1mo": ("4h", 180),
+        "3mo": ("1d", 90),
+        "6mo": ("1d", 180),
+        "1y": ("1d", 365),
+    }
+    interval, limit = mapping.get(range_key, ("1d", 365))
+    return normalize_binance_points(binance_klines(symbol, interval, limit))
+
+
+def normalize_binance_backtest_history(symbol, range_key, start_date=None, end_date=None):
+    if start_date and end_date:
+        start_ms = int(start_date.replace(tzinfo=timezone.utc).timestamp() * 1000)
+        end_ms = int((end_date + timedelta(days=1)).replace(tzinfo=timezone.utc).timestamp() * 1000)
+    else:
+        start_ms, end_ms = crypto_history_window(range_key)
+    points = []
+    cursor = start_ms
+    while cursor < end_ms:
+        rows = binance_klines(symbol, "1d", 1000, cursor, end_ms)
+        if not rows:
+            break
+        chunk = normalize_binance_points(rows)
+        points.extend(chunk)
+        next_cursor = int(rows[-1][0]) + 24 * 60 * 60 * 1000
+        if next_cursor <= cursor:
+            break
+        cursor = next_cursor
+        if len(rows) < 1000:
+            break
+    if len(points) < 2:
+        raise ValueError("No crypto historical prices returned")
+    return points
 
 
 def yahoo_chart_period(symbol, start_date, end_date, interval="1d"):
@@ -123,6 +234,9 @@ def candidate_symbols(query):
 
 
 def normalize_quote(symbol):
+    symbol = normalize_market_symbol(symbol)
+    if is_crypto_symbol(symbol):
+        return normalize_binance_quote(symbol)
     chart = yahoo_chart(symbol)
     meta = chart.get("meta", {})
     price = meta.get("regularMarketPrice")
@@ -143,6 +257,12 @@ def normalize_quote(symbol):
 
 
 def normalize_history(symbol, range_key):
+    symbol = normalize_market_symbol(symbol)
+    if is_crypto_symbol(symbol):
+        points = normalize_binance_history(symbol, range_key)
+        if not points:
+            raise ValueError("No crypto historical prices returned")
+        return {"symbol": symbol.upper(), "range": range_key, "points": [{"t": point["t"], "p": point["p"]} for point in points[-360:]]}
     range_value, interval = HISTORY_RANGES.get(range_key, HISTORY_RANGES["1d"])
     chart = yahoo_chart(symbol, range_value, interval)
     timestamps = chart.get("timestamp") or []
@@ -161,6 +281,9 @@ def normalize_history(symbol, range_key):
 
 
 def normalize_backtest_history(symbol, range_key, start_date=None, end_date=None):
+    symbol = normalize_market_symbol(symbol)
+    if is_crypto_symbol(symbol):
+        return normalize_binance_backtest_history(symbol, range_key, start_date, end_date)
     interval = "1d"
     if start_date and end_date:
         if end_date <= start_date:
@@ -1700,9 +1823,22 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_json(200, {"state": self.load_state(user["id"])})
 
     def handle_search(self, parsed):
-        query = (parse_qs(parsed.query).get("q") or [""])[0].strip()
+        query_data = parse_qs(parsed.query)
+        query = (query_data.get("q") or [""])[0].strip()
+        market = (query_data.get("market") or ["stock"])[0].strip()
         if not query:
             self.end_json(400, {"error": "Missing search query"})
+            return
+        if market == "crypto":
+            normalized = query.upper().replace("/", "")
+            results = [
+                {"symbol": symbol, "name": f"{symbol[:-4]}/USDT", "exchange": "Binance", "type": "CRYPTO"}
+                for symbol in CRYPTO_SYMBOLS
+                if normalized in symbol or symbol.startswith(normalized)
+            ]
+            if is_crypto_symbol(normalized) and all(item["symbol"] != normalized for item in results):
+                results.insert(0, {"symbol": normalized, "name": f"{normalized[:-4]}/USDT", "exchange": "Binance", "type": "CRYPTO"})
+            self.end_json(200, {"results": results})
             return
         try:
             data = fetch_json(YAHOO_SEARCH.format(query=quote(query)))

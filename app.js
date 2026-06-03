@@ -1,4 +1,5 @@
 const DEFAULT_SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "600519.SS", "000001.SZ", "0700.HK"];
+const DEFAULT_CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT"];
 const RANGE_LABELS = {
   "1d": "\u0031\u5929",
   "1wk": "\u0031\u5468",
@@ -15,6 +16,7 @@ const els = {
   loginBtn: document.querySelector("#loginBtn"),
   registerBtn: document.querySelector("#registerBtn"),
   logoutBtn: document.querySelector("#logoutBtn"),
+  marketSelect: document.querySelector("#marketSelect"),
   appNav: document.querySelector(".app-nav"),
   authHint: document.querySelector("#authHint"),
   settingsHint: document.querySelector("#settingsHint"),
@@ -169,6 +171,7 @@ let backtestPricePoints = [];
 let selectedBacktestTradeIndex = null;
 let activeEquityRange = "today";
 let activePage = "dashboard";
+let activeMarket = "stock";
 
 function emptyState() {
   return {
@@ -318,6 +321,28 @@ function historyKey(symbol = state.activeSymbol, range = activeRange) {
   return `${symbol}:${range}`;
 }
 
+function isCryptoSymbol(symbol) {
+  const normalized = String(symbol || "").toUpperCase();
+  return DEFAULT_CRYPTO_SYMBOLS.includes(normalized) || (normalized.endsWith("USDT") && !normalized.includes(".") && normalized.length >= 7);
+}
+
+function marketSymbols() {
+  if (activeMarket === "crypto") {
+    const cryptoWatchlist = (state.symbols || []).filter(isCryptoSymbol);
+    return [...new Set([...DEFAULT_CRYPTO_SYMBOLS, ...cryptoWatchlist])];
+  }
+  return (state.symbols || []).filter((symbol) => !isCryptoSymbol(symbol));
+}
+
+function ensureMarketSymbol() {
+  const symbols = marketSymbols();
+  if (!symbols.length) return;
+  if (!symbols.includes(state.activeSymbol)) {
+    state.activeSymbol = symbols[0];
+    if (els.strategySymbolInput) els.strategySymbolInput.value = state.activeSymbol;
+  }
+}
+
 function quoteMove(quote) {
   const change = quote.price - quote.previousClose;
   const pct = quote.previousClose ? (change / quote.previousClose) * 100 : 0;
@@ -387,9 +412,12 @@ async function logout() {
 }
 
 async function refreshQuotes() {
-  if (!currentUser || !state.symbols.length) return;
+  if (!currentUser) return;
+  ensureMarketSymbol();
+  const symbols = marketSymbols();
+  if (!symbols.length) return;
   try {
-    const data = await apiGet(`/api/quote?symbols=${encodeURIComponent(state.symbols.join(","))}`);
+    const data = await apiGet(`/api/quote?symbols=${encodeURIComponent(symbols.join(","))}`);
     data.quotes.forEach((quote) => {
       state.quotes[quote.symbol] = quote;
     });
@@ -469,7 +497,7 @@ function renderSettings() {
 
 function renderWatchlist() {
   els.watchlist.innerHTML = "";
-  state.symbols.forEach((symbol) => {
+  marketSymbols().forEach((symbol) => {
     const quote = state.quotes[symbol];
     const row = document.createElement("div");
     row.className = `symbol-row ${symbol === state.activeSymbol ? "active" : ""}`;
@@ -643,11 +671,12 @@ function positionMetrics(symbol) {
 
 function renderTradingStocks() {
   if (!els.tradingStockBody) return;
-  if (!state.symbols.length) {
+  const symbols = marketSymbols();
+  if (!symbols.length) {
     els.tradingStockBody.innerHTML = `<tr><td colspan="9">${text.waitQuote}</td></tr>`;
     return;
   }
-  els.tradingStockBody.innerHTML = state.symbols.map((symbol) => {
+  els.tradingStockBody.innerHTML = symbols.map((symbol) => {
     const metrics = positionMetrics(symbol);
     const name = metrics.quote?.name || symbol;
     const rowClass = symbol === state.activeSymbol ? "active-row" : "";
@@ -947,7 +976,7 @@ async function addSymbol() {
   if (!query) return;
   setHint(text.searching);
   try {
-    const data = await apiGet(`/api/search?q=${encodeURIComponent(query)}`);
+    const data = await apiGet(`/api/search?q=${encodeURIComponent(query)}&market=${encodeURIComponent(activeMarket)}`);
     const normalized = query.toUpperCase();
     const exact = data.results.find((item) => item.symbol.toUpperCase() === normalized);
     const picked = exact || data.results[0];
@@ -980,6 +1009,21 @@ async function setActiveSymbol(symbol) {
     setHint(error.message);
   }
   await loadActiveHistory();
+}
+
+async function setMarket(market) {
+  activeMarket = market === "crypto" ? "crypto" : "stock";
+  els.marketSelect.value = activeMarket;
+  ensureMarketSymbol();
+  pointerIndex = null;
+  els.chartTooltip.hidden = true;
+  render();
+  try {
+    await apiPost("/api/account/active-symbol", { symbol: state.activeSymbol });
+  } catch (error) {
+    setHint(error.message);
+  }
+  await refreshQuotes();
 }
 
 async function removeSymbol(symbol) {
@@ -1529,6 +1573,7 @@ async function changePassword() {
 els.loginBtn.addEventListener("click", () => loginOrRegister("login"));
 els.registerBtn.addEventListener("click", () => loginOrRegister("register"));
 els.logoutBtn.addEventListener("click", logout);
+els.marketSelect.addEventListener("change", () => setMarket(els.marketSelect.value));
 els.appNav.querySelectorAll("button[data-page]").forEach((button) => {
   button.addEventListener("click", () => setPage(button.dataset.page));
 });

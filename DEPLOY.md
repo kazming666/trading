@@ -1,6 +1,6 @@
 # Render Deployment Notes
 
-This project is a PostgreSQL-backed paper trading and quant research web app. User accounts, sessions, balances, watchlists, positions, orders, trades, deposits, equity history, daily snapshots, strategy signals, and backtest results are stored server-side.
+This project is a PostgreSQL-backed paper trading and quant research web app. User accounts, sessions, balances, watchlists, positions, orders, trades, deposits, equity history, daily snapshots, strategy signals, and backtest results are stored server-side. Stocks use the existing Yahoo Finance data source; crypto pairs use Binance Public API market data.
 
 ## Database
 
@@ -81,6 +81,15 @@ Strategy modules receive parameters through `market_data["params"]` while keepin
 - MACD: Fast, Slow, and Signal.
 
 Signals are written to PostgreSQL in `signal_history`. They do not place orders.
+
+## Markets
+
+The market selector supports:
+
+- `股票`: existing stock and ETF workflow.
+- `虚拟币`: Binance USDT pairs including `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `BNBUSDT`, and `DOGEUSDT`.
+
+Moving Average, RSI, and MACD run against both markets through the same strategy engine.
 
 ## Backtest Engine
 
