@@ -693,6 +693,48 @@ def signal_strength(strategy_name, signal, points, params):
     return int(max(0, min(100, round(score))))
 
 
+def clamp_score(value):
+    return max(0, min(100, float(value)))
+
+
+def scanner_rating(score):
+    if score >= 90:
+        return "Strong Buy"
+    if score >= 80:
+        return "Buy"
+    if score >= 70:
+        return "Watch"
+    if score >= 60:
+        return "Hold"
+    return "Avoid"
+
+
+def suggested_position_size(score):
+    if score > 90:
+        return 20
+    if score >= 80:
+        return 15
+    if score >= 70:
+        return 10
+    if score >= 60:
+        return 5
+    return 0
+
+
+def scanner_final_score(strength, sharpe, return_pct, max_drawdown):
+    strength_score = clamp_score(strength)
+    sharpe_score = clamp_score((float(sharpe) / 2) * 100)
+    return_score = clamp_score((float(return_pct) / 50) * 100)
+    drawdown_score = clamp_score(100 - (float(max_drawdown) / 35) * 100)
+    return round(
+        strength_score * 0.30
+        + sharpe_score * 0.30
+        + return_score * 0.20
+        + drawdown_score * 0.20,
+        2,
+    )
+
+
 def scan_watchlist_symbol(symbol):
     normalized = normalize_market_symbol(symbol)
     quote_data = normalize_quote(normalized)
@@ -714,7 +756,14 @@ def scan_watchlist_symbol(symbol):
         try:
             backtest = summarize_backtest_result(run_strategy_backtest(strategy_name, normalized, points, params))
         except Exception:
-            backtest = {"returnPct": 0, "sharpeRatio": 0, "maxDrawdown": 0}
+            backtest = {"returnPct": 0, "sharpeRatio": 0, "maxDrawdown": 0, "tradeCount": 0}
+        strength = signal_strength(strategy_name, signal["signal"], points, params)
+        return_pct = float(backtest.get("returnPct") or 0)
+        sharpe = float(backtest.get("sharpeRatio") or 0)
+        max_drawdown = float(backtest.get("maxDrawdown") or 0)
+        trade_count = int(backtest.get("tradeCount") or 0)
+        final_score = scanner_final_score(strength, sharpe, return_pct, max_drawdown)
+        passes_filter = sharpe > 0 and return_pct > 0 and max_drawdown < 35 and trade_count >= 5
         rows.append(
             {
                 "symbol": normalized,
@@ -727,10 +776,15 @@ def scan_watchlist_symbol(symbol):
                 "strategyLabel": scanner_strategy_label(strategy_name),
                 "signal": signal["signal"],
                 "reason": signal.get("reason") or "",
-                "strength": signal_strength(strategy_name, signal["signal"], points, params),
-                "returnPct": backtest.get("returnPct") or 0,
-                "sharpeRatio": backtest.get("sharpeRatio") or 0,
-                "maxDrawdown": backtest.get("maxDrawdown") or 0,
+                "strength": strength,
+                "finalScore": final_score,
+                "rating": scanner_rating(final_score),
+                "suggestedPositionSize": suggested_position_size(final_score),
+                "passesFilter": passes_filter,
+                "returnPct": return_pct,
+                "sharpeRatio": sharpe,
+                "maxDrawdown": max_drawdown,
+                "tradeCount": trade_count,
                 "time": int(time.time() * 1000),
             }
         )
@@ -1291,7 +1345,8 @@ def run_auto_trading_cycle(user_id, scanner_results=None):
                     skipped.append({"symbol": symbol, "reason": str(error)})
 
         directional = [item for item in scanner_results if item.get("signal") in {"BUY", "SELL"}]
-        directional.sort(key=lambda item: (item.get("strength") or 0, item.get("returnPct") or 0), reverse=True)
+        directional = [item for item in directional if item.get("passesFilter", True)]
+        directional.sort(key=lambda item: (item.get("finalScore") or 0, item.get("returnPct") or 0), reverse=True)
         with conn.cursor() as cur:
             cur.execute("SELECT symbol, qty FROM positions WHERE user_id = %s AND qty > 0", (user_id,))
             positions = {row["symbol"]: row["qty"] for row in cur.fetchall()}
@@ -2044,10 +2099,11 @@ class Handler(SimpleHTTPRequestHandler):
                 except Exception as error:
                     errors.append({"symbol": symbol, "error": str(error)})
 
-        results.sort(key=lambda item: (item["strength"], item["returnPct"], item["sharpeRatio"]), reverse=True)
-        directional = [item for item in results if item["signal"] in {"BUY", "SELL"}]
-        top_source = directional or results
-        top_opportunities = sorted(top_source, key=lambda item: (item["strength"], item["returnPct"]), reverse=True)[:10]
+        results.sort(key=lambda item: (item["finalScore"], item["returnPct"], item["sharpeRatio"]), reverse=True)
+        qualified = [item for item in results if item.get("passesFilter")]
+        directional = [item for item in qualified if item["signal"] in {"BUY", "SELL"}]
+        top_source = directional or qualified
+        top_opportunities = sorted(top_source, key=lambda item: (item["finalScore"], item["returnPct"]), reverse=True)[:10]
         auto_result = run_auto_trading_cycle(user["id"], results)
         self.end_json(
             200,

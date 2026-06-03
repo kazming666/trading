@@ -407,6 +407,10 @@ label,
   cursor: pointer;
 }
 
+.scanner-table {
+  min-width: 1680px;
+}
+
 .auto-panel {
   display: grid;
   gap: 14px;
@@ -474,6 +478,14 @@ label,
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--gold), var(--green));
+}
+
+.score-bar i {
+  background: linear-gradient(90deg, var(--blue), var(--green));
+}
+
+.muted-row {
+  opacity: 0.58;
 }
 
 .strategy-param-panel {
