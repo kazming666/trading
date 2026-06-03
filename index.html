@@ -31,6 +31,7 @@
         <button type="button" data-page="portfolio" onclick="window.setPage('portfolio')">Portfolio</button>
         <button type="button" data-page="history" onclick="window.setPage('history')">History</button>
         <button type="button" data-page="scanner" onclick="window.setPage('scanner')">Scanner</button>
+        <button type="button" data-page="auto" onclick="window.setPage('auto')">Auto Trading</button>
         <button type="button" data-page="signals" onclick="window.setPage('signals')">Signals</button>
         <button type="button" data-page="watchlist" onclick="window.setPage('watchlist')">Watchlist</button>
         <button type="button" data-page="settings" onclick="window.setPage('settings')">Settings</button>
@@ -343,6 +344,97 @@
                 </tr>
               </thead>
               <tbody id="scannerBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="page-view" data-view="auto">
+        <section class="history-panel auto-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Paper Auto Trading</h2>
+              <p class="mini-note">&#20165;&#29992;&#20110;&#24403;&#21069;&#30331;&#24405;&#29992;&#25143;&#30340;&#27169;&#25311;&#36134;&#25143;&#12290;&#19981;&#36830;&#25509;&#30495;&#23454;&#21048;&#21830;&#65292;&#19981;&#36830;&#25509; Binance &#19979;&#21333;&#25509;&#21475;&#65292;&#19981;&#20351;&#29992;&#30495;&#23454;&#36164;&#37329;&#12290;</p>
+            </div>
+            <label class="auto-toggle">
+              <input id="autoEnabledInput" type="checkbox">
+              <span>Enable Auto Trading</span>
+            </label>
+          </div>
+
+          <section class="metrics-grid auto-metrics">
+            <div class="metric">
+              <span>&#31574;&#30053;&#21517;&#31216;</span>
+              <strong id="autoStrategyName">Scanner Signals</strong>
+            </div>
+            <div class="metric">
+              <span>&#36816;&#34892;&#29366;&#24577;</span>
+              <strong id="autoRunStatus">--</strong>
+            </div>
+            <div class="metric">
+              <span>&#21551;&#29992;&#26102;&#38388;</span>
+              <strong id="autoEnabledAt">--</strong>
+            </div>
+            <div class="metric">
+              <span>&#20170;&#26085;&#20132;&#26131;&#25968;</span>
+              <strong id="autoTodayTrades">0</strong>
+            </div>
+            <div class="metric">
+              <span>&#24635;&#20132;&#26131;&#25968;</span>
+              <strong id="autoTotalTrades">0</strong>
+            </div>
+            <div class="metric">
+              <span>&#32047;&#35745;&#25910;&#30410;&#29575;</span>
+              <strong id="autoCumulativeReturn">0.00%</strong>
+            </div>
+          </section>
+
+          <div class="auto-settings-grid">
+            <label>
+              &#21333;&#31508;&#20179;&#20301;
+              <select id="autoPositionPctSelect">
+                <option value="5">5%</option>
+                <option value="10" selected>10%</option>
+                <option value="20">20%</option>
+                <option value="50">50%</option>
+              </select>
+            </label>
+            <label>
+              &#26368;&#22823;&#25345;&#20179;&#25968;&#37327;
+              <select id="autoMaxPositionsSelect">
+                <option value="1">1</option>
+                <option value="3" selected>3</option>
+                <option value="5">5</option>
+                <option value="10">10</option>
+              </select>
+            </label>
+            <label>
+              &#26368;&#22823;&#21333;&#26085;&#20111;&#25439;
+              <select id="autoMaxLossSelect">
+                <option value="2">2%</option>
+                <option value="5" selected>5%</option>
+                <option value="10">10%</option>
+              </select>
+            </label>
+            <div class="auto-actions">
+              <button id="autoSaveBtn" class="primary-action" type="button">&#20445;&#23384;&#35774;&#32622;</button>
+              <button id="autoRunBtn" class="ghost-btn" type="button">&#31435;&#21363;&#25195;&#25551;&#24182;&#27169;&#25311;&#25191;&#34892;</button>
+            </div>
+          </div>
+          <p id="autoHint" class="trade-hint"></p>
+          <div class="table-wrap">
+            <table class="auto-action-table">
+              <thead>
+                <tr>
+                  <th>&#20195;&#30721;</th>
+                  <th>&#26041;&#21521;</th>
+                  <th>&#31574;&#30053;</th>
+                  <th>&#25968;&#37327;</th>
+                  <th>&#20215;&#26684;</th>
+                  <th>&#37329;&#39069;</th>
+                </tr>
+              </thead>
+              <tbody id="autoActionBody"></tbody>
             </table>
           </div>
         </section>
@@ -713,6 +805,6 @@ ETHUSDT</textarea>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260603h"></script>
+    <script src="app.js?v=20260604a"></script>
   </body>
 </html>

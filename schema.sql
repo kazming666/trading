@@ -89,6 +89,22 @@ ALTER TABLE trades ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC(20, 8);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS equity_before NUMERIC(20, 8);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS equity_after NUMERIC(20, 8);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS equity_change NUMERIC(20, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS execution_source TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS strategy_name TEXT;
+
+CREATE TABLE IF NOT EXISTS auto_trading_settings (
+    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    enabled BOOLEAN NOT NULL DEFAULT false,
+    stopped BOOLEAN NOT NULL DEFAULT false,
+    stop_reason TEXT NOT NULL DEFAULT '',
+    position_pct NUMERIC(10, 4) NOT NULL DEFAULT 10,
+    max_positions INTEGER NOT NULL DEFAULT 3,
+    max_daily_loss_pct NUMERIC(10, 4) NOT NULL DEFAULT 5,
+    enabled_at TIMESTAMPTZ,
+    last_run_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS account_transactions (
     id BIGSERIAL PRIMARY KEY,
@@ -175,6 +191,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_trades_user_executed ON trades(user_id, executed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trades_user_source_executed ON trades(user_id, execution_source, executed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_user_created ON account_transactions(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_equity_history_user_created ON equity_history(user_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_daily_snapshots_user_date ON daily_snapshots(user_id, snapshot_date ASC);

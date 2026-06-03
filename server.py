@@ -936,6 +936,14 @@ def ensure_account(conn, user_id):
                 """,
                 (user_id, symbol, sort_order),
             )
+        cur.execute(
+            """
+            INSERT INTO auto_trading_settings (user_id)
+            VALUES (%s)
+            ON CONFLICT (user_id) DO NOTHING
+            """,
+            (user_id,),
+        )
 
 
 def estimate_positions_value(conn, user_id):
@@ -1038,6 +1046,301 @@ def record_all_equity_snapshots():
         print(f"Warning: equity snapshot worker failed: {error}")
 
 
+def execute_paper_trade(conn, user_id, symbol, side, qty, quote_data=None, execution_source="manual", strategy_name=None):
+    symbol = normalize_market_symbol(symbol)
+    qty = Decimal(str(qty))
+    if side not in {"buy", "sell"} or not symbol or qty <= 0:
+        raise ValueError("Invalid trade.")
+    quote_data = quote_data or normalize_quote(symbol)
+    price = Decimal(str(quote_data["price"]))
+    value = qty * price
+    currency = quote_data["currency"]
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT cash_balance FROM accounts WHERE user_id = %s FOR UPDATE", (user_id,))
+        account = cur.fetchone()
+        cur.execute("SELECT qty, avg_price FROM positions WHERE user_id = %s AND symbol = %s FOR UPDATE", (user_id, symbol))
+        position = cur.fetchone()
+        current_qty = position["qty"] if position else Decimal("0")
+        avg_price = position["avg_price"] if position else Decimal("0")
+        equity_before = account["cash_balance"] + estimate_positions_value(conn, user_id)
+        realized_pnl = None
+
+        if side == "buy":
+            if account["cash_balance"] < value:
+                raise ValueError("Insufficient cash.")
+            new_qty = current_qty + qty
+            new_avg = ((current_qty * avg_price) + value) / new_qty
+            cur.execute("UPDATE accounts SET cash_balance = cash_balance - %s, updated_at = now() WHERE user_id = %s", (value, user_id))
+            account_balance_after = account["cash_balance"] - value
+            position_qty_after = new_qty
+            cur.execute(
+                """
+                INSERT INTO positions (user_id, symbol, qty, avg_price, currency)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id, symbol)
+                DO UPDATE SET qty = EXCLUDED.qty, avg_price = EXCLUDED.avg_price, currency = EXCLUDED.currency, updated_at = now()
+                """,
+                (user_id, symbol, new_qty, new_avg, currency),
+            )
+        else:
+            if current_qty < qty:
+                raise ValueError("Insufficient shares.")
+            new_qty = current_qty - qty
+            realized_pnl = (price - avg_price) * qty
+            cur.execute("UPDATE accounts SET cash_balance = cash_balance + %s, updated_at = now() WHERE user_id = %s", (value, user_id))
+            account_balance_after = account["cash_balance"] + value
+            position_qty_after = new_qty
+            if new_qty <= 0:
+                cur.execute("DELETE FROM positions WHERE user_id = %s AND symbol = %s", (user_id, symbol))
+            else:
+                cur.execute("UPDATE positions SET qty = %s, updated_at = now() WHERE user_id = %s AND symbol = %s", (new_qty, user_id, symbol))
+
+        cur.execute(
+            """
+            INSERT INTO orders (user_id, symbol, side, order_type, status, qty, filled_qty, price, value, currency)
+            VALUES (%s, %s, %s, 'market', 'filled', %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (user_id, symbol, side, qty, qty, price, value, currency),
+        )
+        order_id = cur.fetchone()["id"]
+        cur.execute(
+            """
+            INSERT INTO trades (user_id, order_id, symbol, side, qty, price, value, currency, execution_source, strategy_name)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (user_id, order_id, symbol, side, qty, price, value, currency, execution_source, strategy_name),
+        )
+        trade_id = cur.fetchone()["id"]
+        equity_after = record_equity_snapshot(conn, user_id, "trade", trade_id)
+        cur.execute(
+            """
+            UPDATE trades
+            SET account_balance_after = %s,
+                position_qty_after = %s,
+                realized_pnl = %s,
+                equity_before = %s,
+                equity_after = %s,
+                equity_change = %s
+            WHERE id = %s
+            """,
+            (
+                account_balance_after,
+                position_qty_after,
+                realized_pnl,
+                equity_before,
+                equity_after,
+                equity_after - equity_before,
+                trade_id,
+            ),
+        )
+    return {
+        "tradeId": trade_id,
+        "symbol": symbol,
+        "side": side,
+        "qty": qty,
+        "price": price,
+        "value": value,
+        "currency": currency,
+        "realizedPnl": realized_pnl,
+    }
+
+
+def clean_auto_settings_payload(data):
+    def allowed_number(name, default, allowed):
+        try:
+            value = float(data.get(name, default))
+        except (TypeError, ValueError):
+            value = default
+        return value if value in allowed else default
+
+    def allowed_int(name, default, allowed):
+        try:
+            value = int(data.get(name, default))
+        except (TypeError, ValueError):
+            value = default
+        return value if value in allowed else default
+
+    return {
+        "enabled": bool(data.get("enabled")),
+        "positionPct": allowed_number("positionPct", 10, {5, 10, 20, 50}),
+        "maxPositions": allowed_int("maxPositions", 3, {1, 3, 5, 10}),
+        "maxDailyLossPct": allowed_number("maxDailyLossPct", 5, {2, 5, 10}),
+    }
+
+
+def auto_trading_stats(conn, user_id):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO auto_trading_settings (user_id)
+            VALUES (%s)
+            ON CONFLICT (user_id) DO NOTHING
+            """,
+            (user_id,),
+        )
+        cur.execute(
+            """
+            SELECT enabled, stopped, stop_reason, position_pct, max_positions, max_daily_loss_pct,
+                   enabled_at, last_run_at, updated_at
+            FROM auto_trading_settings
+            WHERE user_id = %s
+            """,
+            (user_id,),
+        )
+        settings = cur.fetchone()
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE executed_at >= date_trunc('day', now())) AS today_trades,
+                COUNT(*) AS total_trades,
+                COALESCE(SUM(CASE WHEN side = 'sell' THEN realized_pnl ELSE 0 END), 0) AS realized_pnl
+            FROM trades
+            WHERE user_id = %s AND execution_source = 'auto'
+            """,
+            (user_id,),
+        )
+        trade_stats = cur.fetchone()
+        cur.execute("SELECT starting_cash FROM accounts WHERE user_id = %s", (user_id,))
+        account = cur.fetchone()
+    starting_cash = account["starting_cash"] or Decimal("0")
+    realized_pnl = trade_stats["realized_pnl"] or Decimal("0")
+    cumulative_return = (realized_pnl / starting_cash * Decimal("100")) if starting_cash > 0 else Decimal("0")
+    return {
+        "enabled": settings["enabled"],
+        "stopped": settings["stopped"],
+        "stopReason": settings["stop_reason"],
+        "positionPct": settings["position_pct"],
+        "maxPositions": settings["max_positions"],
+        "maxDailyLossPct": settings["max_daily_loss_pct"],
+        "enabledAt": int(settings["enabled_at"].timestamp() * 1000) if settings["enabled_at"] else None,
+        "lastRunAt": int(settings["last_run_at"].timestamp() * 1000) if settings["last_run_at"] else None,
+        "updatedAt": int(settings["updated_at"].timestamp() * 1000) if settings["updated_at"] else None,
+        "todayTrades": int(trade_stats["today_trades"] or 0),
+        "totalTrades": int(trade_stats["total_trades"] or 0),
+        "cumulativeReturn": cumulative_return,
+    }
+
+
+def account_daily_loss_pct(conn, user_id):
+    totals = portfolio_totals(conn, user_id)
+    current_equity = totals["equity"]
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT equity
+            FROM equity_history
+            WHERE user_id = %s AND created_at >= date_trunc('day', now())
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        first = cur.fetchone()
+    start_equity = first["equity"] if first else current_equity
+    if start_equity <= 0:
+        return Decimal("0")
+    loss = max(Decimal("0"), start_equity - current_equity)
+    return loss / start_equity * Decimal("100")
+
+
+def run_auto_trading_cycle(user_id, scanner_results=None):
+    actions = []
+    skipped = []
+    with db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO auto_trading_settings (user_id)
+                VALUES (%s)
+                ON CONFLICT (user_id) DO NOTHING
+                """,
+                (user_id,),
+            )
+            cur.execute("SELECT * FROM auto_trading_settings WHERE user_id = %s FOR UPDATE", (user_id,))
+            settings = cur.fetchone()
+        if not settings["enabled"] or settings["stopped"]:
+            conn.commit()
+            return {"actions": actions, "skipped": skipped, "stateChanged": False, "settings": auto_trading_stats(conn, user_id)}
+
+        daily_loss = account_daily_loss_pct(conn, user_id)
+        if daily_loss >= settings["max_daily_loss_pct"]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE auto_trading_settings
+                    SET enabled = false, stopped = true, stop_reason = %s, updated_at = now()
+                    WHERE user_id = %s
+                    """,
+                    (f"Max daily loss reached: {daily_loss:.2f}%", user_id),
+                )
+            conn.commit()
+            return {"actions": actions, "skipped": skipped, "stateChanged": True, "settings": auto_trading_stats(conn, user_id)}
+
+        if scanner_results is None:
+            with conn.cursor() as cur:
+                cur.execute("SELECT symbol FROM watchlist WHERE user_id = %s ORDER BY sort_order, symbol LIMIT 40", (user_id,))
+                symbols = [row["symbol"] for row in cur.fetchall()]
+            scanner_results = []
+            for symbol in symbols:
+                try:
+                    scanner_results.extend(scan_watchlist_symbol(symbol))
+                except Exception as error:
+                    skipped.append({"symbol": symbol, "reason": str(error)})
+
+        directional = [item for item in scanner_results if item.get("signal") in {"BUY", "SELL"}]
+        directional.sort(key=lambda item: (item.get("strength") or 0, item.get("returnPct") or 0), reverse=True)
+        with conn.cursor() as cur:
+            cur.execute("SELECT symbol, qty FROM positions WHERE user_id = %s AND qty > 0", (user_id,))
+            positions = {row["symbol"]: row["qty"] for row in cur.fetchall()}
+            cur.execute("SELECT cash_balance FROM accounts WHERE user_id = %s", (user_id,))
+            cash_balance = cur.fetchone()["cash_balance"]
+
+        for item in directional:
+            symbol = normalize_market_symbol(item["symbol"])
+            signal = item["signal"]
+            strategy_name = item.get("strategy") or item.get("strategyLabel") or "scanner"
+            try:
+                quote_data = normalize_quote(symbol)
+                price = Decimal(str(quote_data["price"]))
+                if signal == "BUY":
+                    if symbol in positions:
+                        skipped.append({"symbol": symbol, "signal": signal, "reason": "Position already open."})
+                        continue
+                    if len(positions) >= int(settings["max_positions"]):
+                        skipped.append({"symbol": symbol, "signal": signal, "reason": "Max holdings reached."})
+                        continue
+                    totals = portfolio_totals(conn, user_id)
+                    target_value = totals["equity"] * Decimal(str(settings["position_pct"])) / Decimal("100")
+                    target_value = min(target_value, cash_balance)
+                    if target_value <= 0 or price <= 0:
+                        skipped.append({"symbol": symbol, "signal": signal, "reason": "No available cash."})
+                        continue
+                    qty = target_value / price
+                    fill = execute_paper_trade(conn, user_id, symbol, "buy", qty, quote_data, "auto", strategy_name)
+                    positions[symbol] = fill["qty"]
+                    cash_balance -= fill["value"]
+                    actions.append({"symbol": symbol, "side": "buy", "strategy": strategy_name, "qty": fill["qty"], "price": fill["price"], "value": fill["value"]})
+                elif signal == "SELL":
+                    qty = positions.get(symbol)
+                    if not qty:
+                        skipped.append({"symbol": symbol, "signal": signal, "reason": "No open position to close."})
+                        continue
+                    fill = execute_paper_trade(conn, user_id, symbol, "sell", qty, quote_data, "auto", strategy_name)
+                    positions.pop(symbol, None)
+                    cash_balance += fill["value"]
+                    actions.append({"symbol": symbol, "side": "sell", "strategy": strategy_name, "qty": fill["qty"], "price": fill["price"], "value": fill["value"], "realizedPnl": fill["realizedPnl"]})
+            except Exception as error:
+                skipped.append({"symbol": symbol, "signal": signal, "reason": str(error)})
+
+        with conn.cursor() as cur:
+            cur.execute("UPDATE auto_trading_settings SET last_run_at = now(), updated_at = now() WHERE user_id = %s", (user_id,))
+        conn.commit()
+        return {"actions": actions, "skipped": skipped, "stateChanged": bool(actions), "settings": auto_trading_stats(conn, user_id)}
+
+
 def start_equity_snapshot_worker():
     if not db_ready():
         return
@@ -1071,6 +1374,8 @@ class Handler(SimpleHTTPRequestHandler):
         "/api/account/deposit": "handle_deposit",
         "/api/account/reset": "handle_reset_account",
         "/api/account/active-symbol": "handle_active_symbol",
+        "/api/auto-trading/settings": "handle_auto_trading_settings",
+        "/api/auto-trading/run": "handle_auto_trading_run",
         "/api/watchlist": "handle_add_watchlist",
         "/api/trade": "handle_trade",
         "/api/strategy/run": "handle_run_strategy",
@@ -1332,7 +1637,8 @@ class Handler(SimpleHTTPRequestHandler):
                     """
                     SELECT id, order_id, symbol, side, qty, price, value, currency,
                            account_balance_after, position_qty_after, realized_pnl,
-                           equity_before, equity_after, equity_change, executed_at
+                           equity_before, equity_after, equity_change, execution_source,
+                           strategy_name, executed_at
                     FROM trades WHERE user_id = %s ORDER BY executed_at DESC LIMIT 500
                     """,
                     (user_id,),
@@ -1509,6 +1815,8 @@ class Handler(SimpleHTTPRequestHandler):
                     "equityBefore": row["equity_before"],
                     "equityAfter": row["equity_after"],
                     "equityChange": row["equity_change"],
+                    "executionSource": row["execution_source"],
+                    "strategyName": row["strategy_name"],
                 }
                 for row in trades
             ],
@@ -1584,6 +1892,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "totalBuyValue": stats["total_buy_value"] or 0,
                 "totalSellValue": stats["total_sell_value"] or 0,
             },
+            "autoTrading": auto_trading_stats(conn, user_id),
         }
 
     def handle_state(self, parsed):
@@ -1738,12 +2047,14 @@ class Handler(SimpleHTTPRequestHandler):
         directional = [item for item in results if item["signal"] in {"BUY", "SELL"}]
         top_source = directional or results
         top_opportunities = sorted(top_source, key=lambda item: (item["strength"], item["returnPct"]), reverse=True)[:10]
+        auto_result = run_auto_trading_cycle(user["id"], results)
         self.end_json(
             200,
             {
                 "results": results,
                 "topOpportunities": top_opportunities,
                 "errors": errors,
+                "autoTrading": auto_result,
                 "serverTime": int(time.time() * 1000),
             },
         )
@@ -1802,6 +2113,53 @@ class Handler(SimpleHTTPRequestHandler):
                 cur.execute("UPDATE accounts SET active_symbol = %s, updated_at = now() WHERE user_id = %s", (symbol, user["id"]))
             conn.commit()
         self.end_json(200, {"ok": True})
+
+    def handle_auto_trading_settings(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        settings = clean_auto_settings_payload(self.read_json())
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO auto_trading_settings
+                        (user_id, enabled, stopped, stop_reason, position_pct, max_positions, max_daily_loss_pct, enabled_at, updated_at)
+                    VALUES (%s, %s, false, '', %s, %s, %s, CASE WHEN %s THEN now() ELSE NULL END, now())
+                    ON CONFLICT (user_id)
+                    DO UPDATE SET
+                        enabled = EXCLUDED.enabled,
+                        stopped = CASE WHEN EXCLUDED.enabled THEN false ELSE auto_trading_settings.stopped END,
+                        stop_reason = CASE WHEN EXCLUDED.enabled THEN '' ELSE auto_trading_settings.stop_reason END,
+                        position_pct = EXCLUDED.position_pct,
+                        max_positions = EXCLUDED.max_positions,
+                        max_daily_loss_pct = EXCLUDED.max_daily_loss_pct,
+                        enabled_at = CASE
+                            WHEN EXCLUDED.enabled AND NOT auto_trading_settings.enabled THEN now()
+                            WHEN EXCLUDED.enabled THEN auto_trading_settings.enabled_at
+                            ELSE NULL
+                        END,
+                        updated_at = now()
+                    """,
+                    (
+                        user["id"],
+                        settings["enabled"],
+                        Decimal(str(settings["positionPct"])),
+                        settings["maxPositions"],
+                        Decimal(str(settings["maxDailyLossPct"])),
+                        settings["enabled"],
+                    ),
+                )
+            conn.commit()
+            payload = auto_trading_stats(conn, user["id"])
+        self.end_json(200, {"autoTrading": payload, "state": self.load_state(user["id"])})
+
+    def handle_auto_trading_run(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        result = run_auto_trading_cycle(user["id"])
+        self.end_json(200, {"autoTrading": result, "state": self.load_state(user["id"])})
 
     def handle_add_watchlist(self, parsed):
         user = self.require_user()
@@ -2077,98 +2435,30 @@ class Handler(SimpleHTTPRequestHandler):
         if side not in {"buy", "sell"} or not symbol or qty <= 0:
             self.end_json(400, {"error": "Invalid trade."})
             return
-        quote_data = normalize_quote(symbol)
-        price = Decimal(str(quote_data["price"]))
-        value = qty * price
-        currency = quote_data["currency"]
-
-        with db_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT cash_balance FROM accounts WHERE user_id = %s FOR UPDATE", (user["id"],))
-                account = cur.fetchone()
-                cur.execute("SELECT qty, avg_price FROM positions WHERE user_id = %s AND symbol = %s FOR UPDATE", (user["id"], symbol))
-                position = cur.fetchone()
-                current_qty = position["qty"] if position else Decimal("0")
-                avg_price = position["avg_price"] if position else Decimal("0")
-                equity_before = account["cash_balance"] + estimate_positions_value(conn, user["id"])
-                realized_pnl = None
-
-                if side == "buy":
-                    if account["cash_balance"] < value:
-                        self.end_json(400, {"error": "Insufficient cash."})
-                        conn.rollback()
-                        return
-                    new_qty = current_qty + qty
-                    new_avg = ((current_qty * avg_price) + value) / new_qty
-                    cur.execute("UPDATE accounts SET cash_balance = cash_balance - %s, updated_at = now() WHERE user_id = %s", (value, user["id"]))
-                    account_balance_after = account["cash_balance"] - value
-                    position_qty_after = new_qty
-                    cur.execute(
-                        """
-                        INSERT INTO positions (user_id, symbol, qty, avg_price, currency)
-                        VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (user_id, symbol)
-                        DO UPDATE SET qty = EXCLUDED.qty, avg_price = EXCLUDED.avg_price, currency = EXCLUDED.currency, updated_at = now()
-                        """,
-                        (user["id"], symbol, new_qty, new_avg, currency),
-                    )
-                else:
-                    if current_qty < qty:
-                        self.end_json(400, {"error": "Insufficient shares."})
-                        conn.rollback()
-                        return
-                    new_qty = current_qty - qty
-                    realized_pnl = (price - avg_price) * qty
-                    cur.execute("UPDATE accounts SET cash_balance = cash_balance + %s, updated_at = now() WHERE user_id = %s", (value, user["id"]))
-                    account_balance_after = account["cash_balance"] + value
-                    position_qty_after = new_qty
-                    if new_qty <= 0:
-                        cur.execute("DELETE FROM positions WHERE user_id = %s AND symbol = %s", (user["id"], symbol))
-                    else:
-                        cur.execute("UPDATE positions SET qty = %s, updated_at = now() WHERE user_id = %s AND symbol = %s", (new_qty, user["id"], symbol))
-
-                cur.execute(
-                    """
-                    INSERT INTO orders (user_id, symbol, side, order_type, status, qty, filled_qty, price, value, currency)
-                    VALUES (%s, %s, %s, 'market', 'filled', %s, %s, %s, %s, %s)
-                    RETURNING id
-                    """,
-                    (user["id"], symbol, side, qty, qty, price, value, currency),
-                )
-                order_id = cur.fetchone()["id"]
-                cur.execute(
-                    """
-                    INSERT INTO trades (user_id, order_id, symbol, side, qty, price, value, currency)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                    """,
-                    (user["id"], order_id, symbol, side, qty, price, value, currency),
-                )
-                trade_id = cur.fetchone()["id"]
-                equity_after = record_equity_snapshot(conn, user["id"], "trade", trade_id)
-                cur.execute(
-                    """
-                    UPDATE trades
-                    SET account_balance_after = %s,
-                        position_qty_after = %s,
-                        realized_pnl = %s,
-                        equity_before = %s,
-                        equity_after = %s,
-                        equity_change = %s
-                    WHERE id = %s
-                    """,
-                    (
-                        account_balance_after,
-                        position_qty_after,
-                        realized_pnl,
-                        equity_before,
-                        equity_after,
-                        equity_after - equity_before,
-                        trade_id,
-                    ),
-                )
-            conn.commit()
-        self.end_json(200, {"state": self.load_state(user["id"]), "fill": {"symbol": symbol, "side": side, "qty": qty, "price": price, "value": value, "currency": currency}})
+        try:
+            with db_connect() as conn:
+                fill = execute_paper_trade(conn, user["id"], symbol, side, qty, execution_source="manual")
+                conn.commit()
+        except ValueError as error:
+            self.end_json(400, {"error": str(error)})
+            return
+        except (HTTPError, URLError, TimeoutError) as error:
+            self.end_json(502, {"error": f"Trade failed: {error}"})
+            return
+        self.end_json(
+            200,
+            {
+                "state": self.load_state(user["id"]),
+                "fill": {
+                    "symbol": fill["symbol"],
+                    "side": fill["side"],
+                    "qty": fill["qty"],
+                    "price": fill["price"],
+                    "value": fill["value"],
+                    "currency": fill["currency"],
+                },
+            },
+        )
 
     def handle_clear_history(self, parsed):
         user = self.require_user()

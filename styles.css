@@ -407,6 +407,57 @@ label,
   cursor: pointer;
 }
 
+.auto-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.auto-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: #ffffff;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.auto-toggle input {
+  width: 18px;
+  min-height: 18px;
+}
+
+.auto-metrics {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+
+.auto-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.auto-settings-grid label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.auto-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.auto-action-table {
+  min-width: 860px;
+}
+
 .strength-bar {
   display: inline-block;
   width: 72px;
@@ -977,12 +1028,14 @@ td:nth-child(3) {
 
   .metrics-grid,
   .stats-grid,
+  .auto-metrics,
   .auth-panel,
   .workspace,
   .trading-layout,
   .settings-grid,
   .quant-grid,
   .quant-grid.lower,
+  .auto-settings-grid,
   .portfolio-config,
   .portfolio-chart-grid {
     grid-template-columns: 1fr;
@@ -1000,7 +1053,9 @@ td:nth-child(3) {
   .strategy-controls button,
   .scanner-toolbar label,
   .scanner-actions,
-  .scanner-actions button {
+  .scanner-actions button,
+  .auto-actions,
+  .auto-actions button {
     width: 100%;
   }
 
