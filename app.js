@@ -52,6 +52,7 @@ const els = {
   backtestRangeSelect: document.querySelector("#backtestRangeSelect"),
   backtestStartDateInput: document.querySelector("#backtestStartDateInput"),
   backtestEndDateInput: document.querySelector("#backtestEndDateInput"),
+  walkForwardRatioSelect: document.querySelector("#walkForwardRatioSelect"),
   runStrategyBtn: document.querySelector("#runStrategyBtn"),
   backtestStrategyBtn: document.querySelector("#backtestStrategyBtn"),
   optimizeStrategyBtn: document.querySelector("#optimizeStrategyBtn"),
@@ -81,7 +82,12 @@ const els = {
   backtestSortino: document.querySelector("#backtestSortino"),
   backtestExpectancy: document.querySelector("#backtestExpectancy"),
   backtestRuntime: document.querySelector("#backtestRuntime"),
+  walkForwardTrainingReturn: document.querySelector("#walkForwardTrainingReturn"),
+  walkForwardTestingReturn: document.querySelector("#walkForwardTestingReturn"),
+  walkForwardEfficiency: document.querySelector("#walkForwardEfficiency"),
+  walkForwardWarning: document.querySelector("#walkForwardWarning"),
   backtestEquityChart: document.querySelector("#backtestEquityChart"),
+  walkForwardChart: document.querySelector("#walkForwardChart"),
   backtestPriceChart: document.querySelector("#backtestPriceChart"),
   backtestPriceTooltip: document.querySelector("#backtestPriceTooltip"),
   backtestTradesBody: document.querySelector("#backtestTradesBody"),
@@ -173,6 +179,7 @@ let clockTimer;
 let tradePage = 1;
 let equityChart;
 let backtestEquityChart;
+let walkForwardChart;
 let latestBacktest = null;
 let latestOptimization = null;
 let backtestPricePoints = [];
@@ -490,6 +497,7 @@ function render() {
   renderBacktestSummary(latestBacktest);
   renderBacktestPriceChart();
   renderBacktestChart(latestBacktest?.equityCurve || []);
+  renderWalkForwardChart(latestBacktest?.walkForward);
   renderBacktestTrades(latestBacktest?.trades || []);
   renderOptimizerResults(latestOptimization);
   renderEquityChart();
@@ -510,6 +518,7 @@ function renderPage() {
   }
   if (activePage === "signals") {
     window.requestAnimationFrame(() => backtestEquityChart?.resize());
+    window.requestAnimationFrame(() => walkForwardChart?.resize());
   }
 }
 
@@ -1249,6 +1258,9 @@ function renderBacktestSummary(result) {
   const avgProfit = Number(result?.avgProfit || 0);
   const avgLoss = Number(result?.avgLoss || 0);
   const expectancy = Number(result?.expectancy || 0);
+  const walkForward = result?.walkForward || null;
+  const trainingReturn = Number(walkForward?.trainingReturn || 0);
+  const testingReturn = Number(walkForward?.testingReturn || 0);
   els.backtestPeriod.textContent = hasResult ? `${isoDate(result.startDate)} ~ ${isoDate(result.endDate)}` : "--";
   els.backtestReturn.textContent = hasResult ? percentText(returnPct) : "--";
   els.backtestReturn.className = returnPct >= 0 ? "up" : "down";
@@ -1271,6 +1283,21 @@ function renderBacktestSummary(result) {
   els.backtestExpectancy.textContent = hasResult ? fmtMoney(expectancy) : "--";
   els.backtestExpectancy.className = expectancy >= 0 ? "up" : "down";
   els.backtestRuntime.textContent = hasResult ? `${number.format(result.runtimeMs || 0)} ms` : "--";
+  els.walkForwardTrainingReturn.textContent = walkForward?.error ? "--" : hasResult && walkForward ? percentText(trainingReturn) : "--";
+  els.walkForwardTrainingReturn.className = trainingReturn >= 0 ? "up" : "down";
+  els.walkForwardTestingReturn.textContent = walkForward?.error ? "--" : hasResult && walkForward ? percentText(testingReturn) : "--";
+  els.walkForwardTestingReturn.className = testingReturn >= 0 ? "up" : "down";
+  els.walkForwardEfficiency.textContent = walkForward?.walkForwardEfficiency == null ? "--" : percentText(walkForward.walkForwardEfficiency);
+  els.walkForwardWarning.textContent = "";
+  els.walkForwardWarning.className = "trade-hint";
+  if (walkForward?.error) {
+    els.walkForwardWarning.textContent = walkForward.error;
+  } else if (walkForward?.overfitWarning) {
+    els.walkForwardWarning.textContent = "\u6d4b\u8bd5\u6536\u76ca\u660e\u663e\u4f4e\u4e8e\u8bad\u7ec3\u6536\u76ca\uff0c\u53ef\u80fd\u5b58\u5728\u8fc7\u62df\u5408\u3002";
+    els.walkForwardWarning.className = "trade-hint warning";
+  } else if (walkForward) {
+    els.walkForwardWarning.textContent = `Best training params: ${fmtParams(walkForward.bestParams || {})}`;
+  }
 }
 
 function renderBacktestRanking() {
@@ -1521,6 +1548,79 @@ function renderBacktestChart(points = []) {
   backtestEquityChart.update();
 }
 
+function renderWalkForwardChart(walkForward) {
+  if (!els.walkForwardChart || !window.Chart) return;
+  const trainingPoints = (walkForward?.trainingEquityCurve || [])
+    .map((point) => ({ time: Number(point.time), equity: Number(point.equity) }))
+    .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.equity));
+  const testingPoints = (walkForward?.testingEquityCurve || [])
+    .map((point) => ({ time: Number(point.time), equity: Number(point.equity) }))
+    .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.equity));
+  const labels = [...trainingPoints, ...testingPoints].map((point) => fmtDate(point.time));
+  const trainingValues = [
+    ...trainingPoints.map((point) => point.equity),
+    ...testingPoints.map(() => null)
+  ];
+  const testingValues = [
+    ...trainingPoints.map(() => null),
+    ...testingPoints.map((point) => point.equity)
+  ];
+  if (!walkForwardChart) {
+    walkForwardChart = new Chart(els.walkForwardChart, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Training Equity Curve",
+            data: trainingValues,
+            borderColor: "#2867b2",
+            backgroundColor: "rgba(40, 103, 178, 0.1)",
+            fill: true,
+            tension: 0.22,
+            pointRadius: 1.5
+          },
+          {
+            label: "Testing Equity Curve",
+            data: testingValues,
+            borderColor: "#c23b43",
+            backgroundColor: "rgba(194, 59, 67, 0.08)",
+            fill: true,
+            tension: 0.22,
+            pointRadius: 1.5
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: "index" },
+        plugins: {
+          legend: { display: true, labels: { boxWidth: 10, boxHeight: 10 } },
+          tooltip: {
+            callbacks: {
+              label: (item) => item.parsed.y == null ? "" : `${item.dataset.label}: ${fmtMoney(item.parsed.y)}`
+            }
+          },
+          zoom: {
+            pan: { enabled: true, mode: "x" },
+            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" }
+          }
+        },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8 } },
+          y: { ticks: { callback: (value) => fmtMoney(value) } }
+        }
+      }
+    });
+    return;
+  }
+  walkForwardChart.data.labels = labels;
+  walkForwardChart.data.datasets[0].data = trainingValues;
+  walkForwardChart.data.datasets[1].data = testingValues;
+  walkForwardChart.update();
+}
+
 function renderBacktestTrades(trades = []) {
   if (!els.backtestTradesBody) return;
   if (!trades.length) {
@@ -1613,9 +1713,10 @@ async function runStrategyBacktest() {
   const symbol = currentStrategySymbol();
   const range = els.backtestRangeSelect.value;
   const params = strategyParams();
+  const trainingRatio = Number(els.walkForwardRatioSelect?.value || 0.7);
   setHint(`Backtesting ${strategyName} on ${symbol}...`);
   try {
-    const data = await apiPost("/api/strategy/backtest", { strategyName, symbol, range, params, ...backtestDatePayload() });
+    const data = await apiPost("/api/strategy/backtest", { strategyName, symbol, range, params, trainingRatio, ...backtestDatePayload() });
     mergeServerState(data.state);
     latestBacktest = data.backtest;
     selectedBacktestTradeIndex = null;

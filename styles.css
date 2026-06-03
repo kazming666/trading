@@ -230,6 +230,11 @@ label,
   font-size: 13px;
 }
 
+.trade-hint.warning {
+  color: var(--red);
+  font-weight: 700;
+}
+
 .metric strong {
   display: block;
   margin-top: 6px;

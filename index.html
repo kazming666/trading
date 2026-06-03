@@ -386,6 +386,11 @@
               </select>
               <input id="backtestStartDateInput" type="date" aria-label="backtest start date">
               <input id="backtestEndDateInput" type="date" aria-label="backtest end date">
+              <select id="walkForwardRatioSelect" aria-label="walk forward training ratio">
+                <option value="0.6">60% Training / 40% Testing</option>
+                <option value="0.7" selected>70% Training / 30% Testing</option>
+                <option value="0.8">80% Training / 20% Testing</option>
+              </select>
               <button id="runStrategyBtn" class="primary-action" type="button">&#36816;&#34892;&#31574;&#30053;</button>
               <button id="backtestStrategyBtn" class="primary-action" type="button">Backtest</button>
               <button id="optimizeStrategyBtn" class="primary-action" type="button">Optimize</button>
@@ -460,7 +465,11 @@
                 <div><span>Sortino Ratio</span><strong id="backtestSortino">--</strong></div>
                 <div><span>Expectancy</span><strong id="backtestExpectancy">--</strong></div>
                 <div><span>&#36816;&#34892;&#26102;&#38388;</span><strong id="backtestRuntime">--</strong></div>
+                <div><span>Training Return</span><strong id="walkForwardTrainingReturn">--</strong></div>
+                <div><span>Testing Return</span><strong id="walkForwardTestingReturn">--</strong></div>
+                <div><span>Walk Forward Efficiency</span><strong id="walkForwardEfficiency">--</strong></div>
               </div>
+              <p id="walkForwardWarning" class="trade-hint"></p>
             </section>
           </div>
 
@@ -482,6 +491,16 @@
             </div>
             <div class="backtest-chart-wrap">
               <canvas id="backtestEquityChart"></canvas>
+            </div>
+          </div>
+
+          <div class="quant-chart-card">
+            <div class="panel-head">
+              <h3>Walk Forward Validation</h3>
+              <span class="mini-note">Training Equity Curve and Testing Equity Curve use the optimized training parameters.</span>
+            </div>
+            <div class="backtest-chart-wrap">
+              <canvas id="walkForwardChart"></canvas>
             </div>
           </div>
 
@@ -635,6 +654,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260603f"></script>
+    <script src="app.js?v=20260603g"></script>
   </body>
 </html>

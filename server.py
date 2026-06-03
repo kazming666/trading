@@ -454,6 +454,62 @@ def summarize_backtest_result(result):
     }
 
 
+def clean_training_ratio(value):
+    try:
+        ratio = float(value)
+    except (TypeError, ValueError):
+        ratio = 0.7
+    return max(0.5, min(0.9, ratio))
+
+
+def normalize_equity_curve(curve):
+    return [
+        {
+            "time": point["time"],
+            "equity": point["equity"],
+            "cash": point.get("cash", 0),
+            "positionValue": point.get("positionValue", 0),
+        }
+        for point in curve
+    ]
+
+
+def run_walk_forward_validation(strategy_name, symbol, points, base_params, training_ratio=0.7):
+    ratio = clean_training_ratio(training_ratio)
+    if len(points) < 60:
+        return {
+            "trainingRatio": ratio,
+            "testingRatio": 1 - ratio,
+            "error": "Need at least 60 historical price points for walk forward validation.",
+        }
+    split_index = max(30, min(len(points) - 30, int(len(points) * ratio)))
+    training_points = points[:split_index]
+    testing_points = points[split_index:]
+    candidates = optimizer_grid(strategy_name, base_params)
+    training_results = [run_strategy_backtest(strategy_name, symbol, training_points, params) for params in candidates]
+    best_training = max(training_results, key=lambda item: item["returnPct"])
+    testing_result = run_strategy_backtest(strategy_name, symbol, testing_points, best_training["params"])
+    training_return = float(best_training["returnPct"])
+    testing_return = float(testing_result["returnPct"])
+    efficiency = (testing_return / training_return * 100) if training_return > 0 else None
+    overfit_warning = training_return > 0 and (testing_return < 0 or testing_return < training_return * 0.5)
+    return {
+        "trainingRatio": ratio,
+        "testingRatio": 1 - ratio,
+        "bestParams": best_training["params"],
+        "trainingReturn": training_return,
+        "testingReturn": testing_return,
+        "walkForwardEfficiency": efficiency,
+        "overfitWarning": overfit_warning,
+        "trainingStartDate": best_training["startDate"],
+        "trainingEndDate": best_training["endDate"],
+        "testingStartDate": testing_result["startDate"],
+        "testingEndDate": testing_result["endDate"],
+        "trainingEquityCurve": normalize_equity_curve(best_training["equityCurve"]),
+        "testingEquityCurve": normalize_equity_curve(testing_result["equityCurve"]),
+    }
+
+
 def scanner_strategy_label(strategy_name):
     return {"moving_average": "MA", "rsi": "RSI", "macd": "MACD"}.get(strategy_name, strategy_name)
 
@@ -1781,6 +1837,7 @@ class Handler(SimpleHTTPRequestHandler):
         start_date = parse_date_picker(data.get("startDate"))
         end_date = parse_date_picker(data.get("endDate"))
         params = clean_strategy_params(strategy_name, data.get("params") or {})
+        training_ratio = clean_training_ratio(data.get("trainingRatio"))
         if not symbol:
             self.end_json(400, {"error": "Missing symbol."})
             return
@@ -1791,6 +1848,7 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             points = normalize_backtest_history(symbol, range_key, start_date, end_date)
             result = run_strategy_backtest(strategy_name, symbol, points, params)
+            result["walkForward"] = run_walk_forward_validation(strategy_name, symbol, points, params, training_ratio)
         except (HTTPError, URLError, TimeoutError, ValueError) as error:
             self.end_json(502, {"error": f"Backtest failed: {error}"})
             return
