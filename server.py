@@ -510,6 +510,87 @@ def run_walk_forward_validation(strategy_name, symbol, points, base_params, trai
     }
 
 
+def parse_portfolio_symbols(raw_symbols):
+    if isinstance(raw_symbols, list):
+        candidates = raw_symbols
+    else:
+        candidates = str(raw_symbols or "").replace(",", "\n").splitlines()
+    symbols = []
+    seen = set()
+    for item in candidates:
+        symbol = normalize_market_symbol(str(item).strip())
+        if symbol and symbol not in seen:
+            symbols.append(symbol)
+            seen.add(symbol)
+    return symbols[:12]
+
+
+def parse_portfolio_weights(symbols, raw_weights, mode):
+    if mode != "custom":
+        equal_weight = 1 / len(symbols)
+        return {symbol: equal_weight for symbol in symbols}
+    source = {}
+    if isinstance(raw_weights, dict):
+        source = {normalize_market_symbol(key): value for key, value in raw_weights.items()}
+    else:
+        for line in str(raw_weights or "").replace(",", "\n").splitlines():
+            if ":" in line:
+                symbol, value = line.split(":", 1)
+            elif "=" in line:
+                symbol, value = line.split("=", 1)
+            else:
+                parts = line.split()
+                if len(parts) != 2:
+                    continue
+                symbol, value = parts
+            source[normalize_market_symbol(symbol)] = value
+    weights = {}
+    for symbol in symbols:
+        try:
+            weights[symbol] = max(0, float(source.get(symbol, 0)))
+        except (TypeError, ValueError):
+            weights[symbol] = 0
+    total = sum(weights.values())
+    if total <= 0:
+        equal_weight = 1 / len(symbols)
+        return {symbol: equal_weight for symbol in symbols}
+    return {symbol: value / total for symbol, value in weights.items()}
+
+
+def run_portfolio_backtest(symbols, weights, histories):
+    price_maps = {}
+    for symbol, points in histories.items():
+        price_maps[symbol] = {
+            datetime.fromtimestamp(point["t"] / 1000, tz=timezone.utc).date().isoformat(): float(point["p"])
+            for point in points
+            if point.get("p") is not None and float(point["p"]) > 0
+        }
+    common_dates = sorted(set.intersection(*(set(price_maps[symbol]) for symbol in symbols)))
+    if len(common_dates) < 2:
+        raise ValueError("Not enough overlapping history for selected assets.")
+    first_prices = {symbol: price_maps[symbol][common_dates[0]] for symbol in symbols}
+    starting_cash = 100000.0
+    equity_curve = []
+    for date_key in common_dates:
+        equity = starting_cash * sum(weights[symbol] * (price_maps[symbol][date_key] / first_prices[symbol]) for symbol in symbols)
+        timestamp = int(datetime.fromisoformat(date_key).replace(tzinfo=timezone.utc).timestamp() * 1000)
+        equity_curve.append({"time": timestamp, "equity": equity})
+    final_equity = equity_curve[-1]["equity"]
+    return {
+        "symbols": symbols,
+        "weights": weights,
+        "startDate": equity_curve[0]["time"],
+        "endDate": equity_curve[-1]["time"],
+        "initialCash": starting_cash,
+        "finalEquity": final_equity,
+        "returnPct": (final_equity - starting_cash) / starting_cash * 100,
+        "sharpeRatio": calculate_sharpe_ratio(equity_curve),
+        "maxDrawdown": calculate_max_drawdown([point["equity"] for point in equity_curve]),
+        "equityCurve": equity_curve,
+        "allocation": [{"symbol": symbol, "weight": weights[symbol] * 100} for symbol in symbols],
+    }
+
+
 def scanner_strategy_label(strategy_name):
     return {"moving_average": "MA", "rsi": "RSI", "macd": "MACD"}.get(strategy_name, strategy_name)
 
@@ -994,6 +1075,7 @@ class Handler(SimpleHTTPRequestHandler):
         "/api/trade": "handle_trade",
         "/api/strategy/run": "handle_run_strategy",
         "/api/strategy/backtest": "handle_strategy_backtest",
+        "/api/strategy/portfolio-backtest": "handle_portfolio_backtest",
         "/api/strategy/optimize": "handle_strategy_optimize",
         "/api/history/clear": "handle_clear_history",
     }
@@ -1903,6 +1985,37 @@ class Handler(SimpleHTTPRequestHandler):
         result["createdAt"] = int(row["created_at"].timestamp() * 1000)
         result["runtimeMs"] = runtime_ms
         self.end_json(200, {"backtest": result, "state": self.load_state(user["id"])})
+
+    def handle_portfolio_backtest(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        data = self.read_json()
+        symbols = parse_portfolio_symbols(data.get("symbols") or data.get("symbolsText") or "")
+        range_key = data.get("range") or "1y"
+        start_date = parse_date_picker(data.get("startDate"))
+        end_date = parse_date_picker(data.get("endDate"))
+        weighting_mode = "custom" if data.get("weightingMode") == "custom" else "equal"
+        if len(symbols) < 2:
+            self.end_json(400, {"error": "Select at least two assets for portfolio backtest."})
+            return
+        if range_key not in BACKTEST_RANGES:
+            self.end_json(400, {"error": "Invalid backtest range."})
+            return
+        weights = parse_portfolio_weights(symbols, data.get("weights"), weighting_mode)
+        started = time.perf_counter()
+        try:
+            histories = {
+                symbol: normalize_backtest_history(symbol, range_key, start_date, end_date)
+                for symbol in symbols
+            }
+            result = run_portfolio_backtest(symbols, weights, histories)
+        except (HTTPError, URLError, TimeoutError, ValueError) as error:
+            self.end_json(502, {"error": f"Portfolio backtest failed: {error}"})
+            return
+        result["runtimeMs"] = int((time.perf_counter() - started) * 1000)
+        result["weightingMode"] = weighting_mode
+        self.end_json(200, {"portfolioBacktest": result})
 
     def handle_strategy_optimize(self, parsed):
         user = self.require_user()

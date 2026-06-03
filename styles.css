@@ -497,6 +497,43 @@ label,
   margin-bottom: 12px;
 }
 
+.portfolio-config,
+.portfolio-chart-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.portfolio-config {
+  grid-template-columns: minmax(220px, 1fr) 180px minmax(220px, 1fr);
+  align-items: start;
+  margin-bottom: 12px;
+}
+
+.portfolio-config label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.portfolio-config textarea {
+  width: 100%;
+  min-height: 118px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: var(--ink);
+  resize: vertical;
+}
+
+.portfolio-chart-grid {
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+}
+
+.allocation-chart-wrap {
+  height: 320px;
+}
+
 .backtest-chart-wrap {
   height: 320px;
 }
@@ -945,7 +982,9 @@ td:nth-child(3) {
   .trading-layout,
   .settings-grid,
   .quant-grid,
-  .quant-grid.lower {
+  .quant-grid.lower,
+  .portfolio-config,
+  .portfolio-chart-grid {
     grid-template-columns: 1fr;
   }
 

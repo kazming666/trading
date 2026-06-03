@@ -504,6 +504,65 @@
             </div>
           </div>
 
+          <div class="quant-card portfolio-backtest-card">
+            <div class="panel-head">
+              <div>
+                <h3>Portfolio Backtest</h3>
+                <p class="mini-note">&#22810;&#26631;&#30340;&#32452;&#21512;&#22238;&#27979;&#65292;&#25903;&#25345;&#31561;&#26435;&#37325;&#21644;&#33258;&#23450;&#20041;&#26435;&#37325;&#65292;&#19981;&#24433;&#21709;&#21333;&#36164;&#20135;&#22238;&#27979;&#12290;</p>
+              </div>
+              <button id="portfolioBacktestBtn" class="primary-action" type="button">Portfolio Backtest</button>
+            </div>
+            <div class="portfolio-config">
+              <label>
+                &#32452;&#21512;&#26631;&#30340;
+                <textarea id="portfolioSymbolsInput" rows="5">AAPL
+MSFT
+NVDA
+BTCUSDT
+ETHUSDT</textarea>
+              </label>
+              <label>
+                &#26435;&#37325;&#27169;&#24335;
+                <select id="portfolioWeightMode">
+                  <option value="equal" selected>&#31561;&#26435;&#37325;</option>
+                  <option value="custom">&#33258;&#23450;&#20041;&#26435;&#37325;</option>
+                </select>
+              </label>
+              <label>
+                &#33258;&#23450;&#20041;&#26435;&#37325;
+                <textarea id="portfolioWeightsInput" rows="5" placeholder="AAPL: 30&#10;MSFT: 20&#10;NVDA: 20&#10;BTCUSDT: 20&#10;ETHUSDT: 10"></textarea>
+              </label>
+            </div>
+            <div class="backtest-metrics portfolio-metrics">
+              <div><span>&#32452;&#21512;&#25910;&#30410;&#29575;</span><strong id="portfolioReturn">--</strong></div>
+              <div><span>&#32452;&#21512; Sharpe</span><strong id="portfolioSharpe">--</strong></div>
+              <div><span>&#32452;&#21512;&#26368;&#22823;&#22238;&#25764;</span><strong id="portfolioDrawdown">--</strong></div>
+              <div><span>&#22238;&#27979;&#21306;&#38388;</span><strong id="portfolioPeriod">--</strong></div>
+            </div>
+            <p id="portfolioBacktestHint" class="trade-hint"></p>
+          </div>
+
+          <div class="portfolio-chart-grid">
+            <div class="quant-chart-card">
+              <div class="panel-head">
+                <h3>&#32452;&#21512;&#20928;&#20540;&#26354;&#32447;</h3>
+                <span class="mini-note">Portfolio Equity Curve</span>
+              </div>
+              <div class="backtest-chart-wrap">
+                <canvas id="portfolioEquityChart"></canvas>
+              </div>
+            </div>
+            <div class="quant-chart-card">
+              <div class="panel-head">
+                <h3>&#36164;&#20135;&#37197;&#32622;</h3>
+                <span class="mini-note">Allocation</span>
+              </div>
+              <div class="allocation-chart-wrap">
+                <canvas id="portfolioAllocationChart"></canvas>
+              </div>
+            </div>
+          </div>
+
           <div class="quant-card">
             <div class="panel-head">
               <div>
@@ -654,6 +713,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260603g"></script>
+    <script src="app.js?v=20260603h"></script>
   </body>
 </html>

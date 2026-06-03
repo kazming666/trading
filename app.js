@@ -88,6 +88,17 @@ const els = {
   walkForwardWarning: document.querySelector("#walkForwardWarning"),
   backtestEquityChart: document.querySelector("#backtestEquityChart"),
   walkForwardChart: document.querySelector("#walkForwardChart"),
+  portfolioSymbolsInput: document.querySelector("#portfolioSymbolsInput"),
+  portfolioWeightMode: document.querySelector("#portfolioWeightMode"),
+  portfolioWeightsInput: document.querySelector("#portfolioWeightsInput"),
+  portfolioBacktestBtn: document.querySelector("#portfolioBacktestBtn"),
+  portfolioReturn: document.querySelector("#portfolioReturn"),
+  portfolioSharpe: document.querySelector("#portfolioSharpe"),
+  portfolioDrawdown: document.querySelector("#portfolioDrawdown"),
+  portfolioPeriod: document.querySelector("#portfolioPeriod"),
+  portfolioBacktestHint: document.querySelector("#portfolioBacktestHint"),
+  portfolioEquityChart: document.querySelector("#portfolioEquityChart"),
+  portfolioAllocationChart: document.querySelector("#portfolioAllocationChart"),
   backtestPriceChart: document.querySelector("#backtestPriceChart"),
   backtestPriceTooltip: document.querySelector("#backtestPriceTooltip"),
   backtestTradesBody: document.querySelector("#backtestTradesBody"),
@@ -180,8 +191,11 @@ let tradePage = 1;
 let equityChart;
 let backtestEquityChart;
 let walkForwardChart;
+let portfolioEquityChart;
+let portfolioAllocationChart;
 let latestBacktest = null;
 let latestOptimization = null;
+let latestPortfolioBacktest = null;
 let backtestPricePoints = [];
 let selectedBacktestTradeIndex = null;
 let activeEquityRange = "today";
@@ -498,6 +512,7 @@ function render() {
   renderBacktestPriceChart();
   renderBacktestChart(latestBacktest?.equityCurve || []);
   renderWalkForwardChart(latestBacktest?.walkForward);
+  renderPortfolioBacktest(latestPortfolioBacktest);
   renderBacktestTrades(latestBacktest?.trades || []);
   renderOptimizerResults(latestOptimization);
   renderEquityChart();
@@ -519,6 +534,8 @@ function renderPage() {
   if (activePage === "signals") {
     window.requestAnimationFrame(() => backtestEquityChart?.resize());
     window.requestAnimationFrame(() => walkForwardChart?.resize());
+    window.requestAnimationFrame(() => portfolioEquityChart?.resize());
+    window.requestAnimationFrame(() => portfolioAllocationChart?.resize());
   }
 }
 
@@ -1621,6 +1638,113 @@ function renderWalkForwardChart(walkForward) {
   walkForwardChart.update();
 }
 
+function renderPortfolioBacktest(result) {
+  if (!els.portfolioReturn) return;
+  const hasResult = Boolean(result);
+  const returnPct = Number(result?.returnPct || 0);
+  const drawdown = Number(result?.maxDrawdown || 0);
+  els.portfolioReturn.textContent = hasResult ? percentText(returnPct) : "--";
+  els.portfolioReturn.className = returnPct >= 0 ? "up" : "down";
+  els.portfolioSharpe.textContent = hasResult ? ratioText(result.sharpeRatio) : "--";
+  els.portfolioDrawdown.textContent = hasResult ? percentText(drawdown) : "--";
+  els.portfolioPeriod.textContent = hasResult ? `${isoDate(result.startDate)} ~ ${isoDate(result.endDate)}` : "--";
+  renderPortfolioEquityChart(result?.equityCurve || []);
+  renderPortfolioAllocationChart(result?.allocation || []);
+}
+
+function renderPortfolioEquityChart(points = []) {
+  if (!els.portfolioEquityChart || !window.Chart) return;
+  const chartPoints = points
+    .map((point) => ({ time: Number(point.time), equity: Number(point.equity) }))
+    .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.equity));
+  const labels = chartPoints.map((point) => fmtDate(point.time));
+  const values = chartPoints.map((point) => point.equity);
+  if (!portfolioEquityChart) {
+    portfolioEquityChart = new Chart(els.portfolioEquityChart, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Portfolio Equity Curve",
+            data: values,
+            borderColor: "#2867b2",
+            backgroundColor: "rgba(40, 103, 178, 0.12)",
+            fill: true,
+            tension: 0.22,
+            pointRadius: 1.5
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: "index" },
+        plugins: {
+          legend: { display: true, labels: { boxWidth: 10, boxHeight: 10 } },
+          tooltip: {
+            callbacks: {
+              label: (item) => `${item.dataset.label}: ${fmtMoney(item.parsed.y)}`
+            }
+          },
+          zoom: {
+            pan: { enabled: true, mode: "x" },
+            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" }
+          }
+        },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8 } },
+          y: { ticks: { callback: (value) => fmtMoney(value) } }
+        }
+      }
+    });
+    return;
+  }
+  portfolioEquityChart.data.labels = labels;
+  portfolioEquityChart.data.datasets[0].data = values;
+  portfolioEquityChart.update();
+}
+
+function renderPortfolioAllocationChart(allocation = []) {
+  if (!els.portfolioAllocationChart || !window.Chart) return;
+  const labels = allocation.map((item) => item.symbol);
+  const values = allocation.map((item) => Number(item.weight || 0));
+  const colors = ["#2867b2", "#167f55", "#b7791f", "#c23b43", "#657166", "#5b7f95", "#7a6f45", "#8b5f65"];
+  if (!portfolioAllocationChart) {
+    portfolioAllocationChart = new Chart(els.portfolioAllocationChart, {
+      type: "doughnut",
+      data: {
+        labels,
+        datasets: [
+          {
+            data: values,
+            backgroundColor: values.map((_, index) => colors[index % colors.length]),
+            borderColor: "#ffffff",
+            borderWidth: 2
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "bottom", labels: { boxWidth: 10, boxHeight: 10 } },
+          tooltip: {
+            callbacks: {
+              label: (item) => `${item.label}: ${Number(item.parsed || 0).toFixed(2)}%`
+            }
+          }
+        }
+      }
+    });
+    return;
+  }
+  portfolioAllocationChart.data.labels = labels;
+  portfolioAllocationChart.data.datasets[0].data = values;
+  portfolioAllocationChart.data.datasets[0].backgroundColor = values.map((_, index) => colors[index % colors.length]);
+  portfolioAllocationChart.update();
+}
+
 function renderBacktestTrades(trades = []) {
   if (!els.backtestTradesBody) return;
   if (!trades.length) {
@@ -1744,6 +1868,32 @@ async function optimizeStrategyParams() {
     render();
   } catch (error) {
     setHint(error.message);
+  }
+}
+
+async function runPortfolioBacktest() {
+  if (!currentUser) {
+    setHint(text.loginRequired);
+    return;
+  }
+  const symbolsText = els.portfolioSymbolsInput.value;
+  const weightingMode = els.portfolioWeightMode.value;
+  const weights = els.portfolioWeightsInput.value;
+  const range = els.backtestRangeSelect.value;
+  els.portfolioBacktestHint.textContent = "Running portfolio backtest...";
+  try {
+    const data = await apiPost("/api/strategy/portfolio-backtest", {
+      symbolsText,
+      weightingMode,
+      weights,
+      range,
+      ...backtestDatePayload()
+    });
+    latestPortfolioBacktest = data.portfolioBacktest;
+    els.portfolioBacktestHint.textContent = `Portfolio backtest complete: ${latestPortfolioBacktest.symbols.join(", ")}.`;
+    render();
+  } catch (error) {
+    els.portfolioBacktestHint.textContent = error.message;
   }
 }
 
@@ -1872,6 +2022,7 @@ els.scannerTop.addEventListener("click", (event) => {
 els.runStrategyBtn.addEventListener("click", runStrategySignal);
 els.backtestStrategyBtn.addEventListener("click", runStrategyBacktest);
 els.optimizeStrategyBtn.addEventListener("click", optimizeStrategyParams);
+els.portfolioBacktestBtn.addEventListener("click", runPortfolioBacktest);
 els.strategySelect.addEventListener("change", renderStrategyControls);
 els.strategySymbolInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runStrategySignal();
