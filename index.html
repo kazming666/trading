@@ -362,9 +362,24 @@
                 <div><span>&#20132;&#26131;&#27425;&#25968;</span><strong id="backtestTradeCount">--</strong></div>
                 <div><span>&#24179;&#22343;&#30408;&#21033;</span><strong id="backtestAvgProfit">--</strong></div>
                 <div><span>&#24179;&#22343;&#20111;&#25439;</span><strong id="backtestAvgLoss">--</strong></div>
+                <div><span>Profit Factor</span><strong id="backtestProfitFactor">--</strong></div>
+                <div><span>Calmar Ratio</span><strong id="backtestCalmar">--</strong></div>
+                <div><span>Sortino Ratio</span><strong id="backtestSortino">--</strong></div>
+                <div><span>Expectancy</span><strong id="backtestExpectancy">--</strong></div>
                 <div><span>&#36816;&#34892;&#26102;&#38388;</span><strong id="backtestRuntime">--</strong></div>
               </div>
             </section>
+          </div>
+
+          <div class="quant-chart-card">
+            <div class="panel-head">
+              <h3>&#20215;&#26684;K&#32447;&#19982;&#20132;&#26131;&#28857;</h3>
+              <span class="mini-note">&#32511;&#33394;&#31661;&#22836; = BUY&#65292;&#32418;&#33394;&#31661;&#22836; = SELL</span>
+            </div>
+            <div class="backtest-price-wrap">
+              <canvas id="backtestPriceChart"></canvas>
+              <div id="backtestPriceTooltip" class="chart-tooltip" hidden></div>
+            </div>
           </div>
 
           <div class="quant-chart-card">
@@ -466,6 +481,7 @@
               <table class="backtest-trade-table">
                 <thead>
                   <tr>
+                    <th>#</th>
                     <th>&#20080;&#20837;&#26102;&#38388;</th>
                     <th>&#21334;&#20986;&#26102;&#38388;</th>
                     <th>&#20080;&#20837;&#20215;</th>
@@ -526,6 +542,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260603c"></script>
+    <script src="app.js?v=20260603d"></script>
   </body>
 </html>

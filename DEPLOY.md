@@ -109,12 +109,16 @@ It does not touch the user's live simulated trading account balance or holdings.
 - annualized return
 - maximum drawdown
 - Sharpe ratio
+- Profit Factor
+- Calmar Ratio
+- Sortino Ratio
+- Expectancy
 - win rate
 - trade count
 - average profit
 - average loss
 
-New runs are saved in `backtest_results`; older `backtest_history` rows remain visible in rankings for compatibility. The latest run returns strategy and Buy & Hold equity curves plus a trade list to the browser, and the page draws both curves with Chart.js zoom/pan support. The ranking table sorts saved backtests by return percentage.
+New runs are saved in `backtest_results`; older `backtest_history` rows remain visible in rankings for compatibility. The latest run returns strategy and Buy & Hold equity curves, OHLC candle data, trade markers, and a trade list to the browser. The page draws the price candlestick chart with BUY/SELL arrows above the equity curve, and the equity curve keeps Chart.js zoom/pan support. The ranking table sorts saved backtests by return percentage.
 
 ## Parameter Optimizer
 

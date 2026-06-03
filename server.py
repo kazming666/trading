@@ -171,8 +171,19 @@ def normalize_backtest_history(symbol, range_key, start_date=None, end_date=None
         chart = yahoo_chart(symbol, range_value, interval)
     timestamps = chart.get("timestamp") or []
     quote_data = ((chart.get("indicators") or {}).get("quote") or [{}])[0]
+    opens = quote_data.get("open") or []
+    highs = quote_data.get("high") or []
+    lows = quote_data.get("low") or []
     closes = quote_data.get("close") or []
-    points = [{"t": ts * 1000, "p": float(close)} for ts, close in zip(timestamps, closes) if close is not None]
+    points = []
+    for index, (ts, close) in enumerate(zip(timestamps, closes)):
+        if close is None:
+            continue
+        close_value = float(close)
+        open_value = float(opens[index]) if index < len(opens) and opens[index] is not None else close_value
+        high_value = float(highs[index]) if index < len(highs) and highs[index] is not None else max(open_value, close_value)
+        low_value = float(lows[index]) if index < len(lows) and lows[index] is not None else min(open_value, close_value)
+        points.append({"t": ts * 1000, "p": close_value, "o": open_value, "h": high_value, "l": low_value, "c": close_value})
     if len(points) < 2:
         raise ValueError("No historical prices returned")
     return points
@@ -241,6 +252,30 @@ def calculate_sharpe_ratio(equity_curve):
     return (mean_return / std_dev) * math.sqrt(252)
 
 
+def calculate_sortino_ratio(equity_curve):
+    returns = []
+    previous = None
+    for point in equity_curve:
+        equity = float(point["equity"])
+        if previous and previous > 0:
+            returns.append((equity - previous) / previous)
+        previous = equity
+    downside = [value for value in returns if value < 0]
+    if len(returns) < 2 or not downside:
+        return 0
+    mean_return = sum(returns) / len(returns)
+    downside_deviation = math.sqrt(sum(value**2 for value in downside) / len(downside))
+    if downside_deviation == 0:
+        return 0
+    return (mean_return / downside_deviation) * math.sqrt(252)
+
+
+def ratio_or_none(numerator, denominator):
+    if denominator == 0:
+        return None
+    return numerator / denominator
+
+
 def optimizer_grid(strategy_name, base_params):
     frequency_bars = int(base_params.get("frequencyBars") or 1)
     if strategy_name == "moving_average":
@@ -284,6 +319,10 @@ def summarize_backtest_result(result):
         "avgProfit": result["avgProfit"],
         "avgLoss": result["avgLoss"],
         "sharpeRatio": result["sharpeRatio"],
+        "profitFactor": result["profitFactor"],
+        "calmarRatio": result["calmarRatio"],
+        "sortinoRatio": result["sortinoRatio"],
+        "expectancy": result["expectancy"],
     }
 
 
@@ -317,6 +356,8 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
                 "buyPrice": price,
                 "qty": qty,
                 "buyValue": cash,
+                "buyReason": signal.get("reason") or "",
+                "strategy": strategy_name,
             }
             cash = 0.0
         elif signal["signal"] == "SELL" and qty > 0:
@@ -333,6 +374,9 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
                     "qty": qty,
                     "returnPct": trade_return,
                     "pnl": pnl,
+                    "strategy": strategy_name,
+                    "buyReason": entry.get("buyReason") if entry else "",
+                    "sellReason": signal.get("reason") or "",
                 }
             )
             cash = exit_value
@@ -365,9 +409,15 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
     annual_return = ((final_equity / starting_cash) ** (365 / days) - 1) * 100 if final_equity > 0 else -100
     max_drawdown = calculate_max_drawdown([point["equity"] for point in equity_curve])
     sharpe_ratio = calculate_sharpe_ratio(equity_curve)
+    sortino_ratio = calculate_sortino_ratio(equity_curve)
     trade_pnls = [trade["pnl"] for trade in trades]
     wins = [pnl for pnl in trade_pnls if pnl > 0]
     losses = [pnl for pnl in trade_pnls if pnl < 0]
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+    profit_factor = ratio_or_none(gross_profit, gross_loss)
+    calmar_ratio = ratio_or_none(annual_return, max_drawdown)
+    expectancy = (sum(trade_pnls) / len(trade_pnls)) if trade_pnls else 0
     win_rate = len(wins) / len(trades) * 100 if trades else 0
     return {
         "strategy": strategy_name,
@@ -383,11 +433,19 @@ def run_strategy_backtest(strategy_name, symbol, points, params):
         "annualReturnPct": annual_return,
         "maxDrawdown": max_drawdown,
         "sharpeRatio": sharpe_ratio,
+        "profitFactor": profit_factor,
+        "calmarRatio": calmar_ratio,
+        "sortinoRatio": sortino_ratio,
+        "expectancy": expectancy,
         "winRate": win_rate,
         "tradeCount": len(trades),
         "avgProfit": (sum(wins) / len(wins)) if wins else 0,
         "avgLoss": (sum(losses) / len(losses)) if losses else 0,
         "equityCurve": equity_curve,
+        "candles": [
+            {"time": point["t"], "open": point.get("o", point["p"]), "high": point.get("h", point["p"]), "low": point.get("l", point["p"]), "close": point.get("c", point["p"])}
+            for point in points
+        ],
         "trades": trades,
         "params": params,
     }

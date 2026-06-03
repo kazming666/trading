@@ -390,6 +390,16 @@ label,
   height: 320px;
 }
 
+.backtest-price-wrap {
+  position: relative;
+  height: 360px;
+}
+
+#backtestPriceChart {
+  width: 100%;
+  height: 100%;
+}
+
 .icon-btn,
 .ghost-btn,
 .segmented button,
@@ -728,6 +738,15 @@ table {
   min-width: 980px;
 }
 
+.backtest-trade-table tbody tr {
+  cursor: pointer;
+}
+
+.backtest-trade-table tbody tr:hover,
+.backtest-trade-table tbody tr.active-row {
+  background: #eef5ff;
+}
+
 .optimizer-table {
   min-width: 900px;
 }
@@ -829,6 +848,10 @@ td:nth-child(3) {
 
   .backtest-chart-wrap {
     height: 280px;
+  }
+
+  .backtest-price-wrap {
+    height: 300px;
   }
 
   .app-nav {

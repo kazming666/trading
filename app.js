@@ -74,8 +74,14 @@ const els = {
   backtestTradeCount: document.querySelector("#backtestTradeCount"),
   backtestAvgProfit: document.querySelector("#backtestAvgProfit"),
   backtestAvgLoss: document.querySelector("#backtestAvgLoss"),
+  backtestProfitFactor: document.querySelector("#backtestProfitFactor"),
+  backtestCalmar: document.querySelector("#backtestCalmar"),
+  backtestSortino: document.querySelector("#backtestSortino"),
+  backtestExpectancy: document.querySelector("#backtestExpectancy"),
   backtestRuntime: document.querySelector("#backtestRuntime"),
   backtestEquityChart: document.querySelector("#backtestEquityChart"),
+  backtestPriceChart: document.querySelector("#backtestPriceChart"),
+  backtestPriceTooltip: document.querySelector("#backtestPriceTooltip"),
   backtestTradesBody: document.querySelector("#backtestTradesBody"),
   strategyRankingBody: document.querySelector("#strategyRankingBody"),
   bestReturnParams: document.querySelector("#bestReturnParams"),
@@ -159,6 +165,8 @@ let equityChart;
 let backtestEquityChart;
 let latestBacktest = null;
 let latestOptimization = null;
+let backtestPricePoints = [];
+let selectedBacktestTradeIndex = null;
 let activeEquityRange = "today";
 let activePage = "dashboard";
 
@@ -222,6 +230,13 @@ function percentText(value) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return "--";
   return `${numberValue.toFixed(2)}%`;
+}
+
+function ratioText(value) {
+  if (value === null || value === undefined) return "--";
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return "--";
+  return numberValue.toFixed(2);
 }
 
 function startOfLocalDay(date = new Date()) {
@@ -419,6 +434,7 @@ function render() {
   renderStrategyControls();
   renderBacktestRanking();
   renderBacktestSummary(latestBacktest);
+  renderBacktestPriceChart();
   renderBacktestChart(latestBacktest?.equityCurve || []);
   renderBacktestTrades(latestBacktest?.trades || []);
   renderOptimizerResults(latestOptimization);
@@ -1065,6 +1081,7 @@ function renderBacktestSummary(result) {
   const winRate = Number(result?.winRate || 0);
   const avgProfit = Number(result?.avgProfit || 0);
   const avgLoss = Number(result?.avgLoss || 0);
+  const expectancy = Number(result?.expectancy || 0);
   els.backtestPeriod.textContent = hasResult ? `${isoDate(result.startDate)} ~ ${isoDate(result.endDate)}` : "--";
   els.backtestReturn.textContent = hasResult ? percentText(returnPct) : "--";
   els.backtestReturn.className = returnPct >= 0 ? "up" : "down";
@@ -1081,6 +1098,11 @@ function renderBacktestSummary(result) {
   els.backtestAvgProfit.className = avgProfit >= 0 ? "up" : "down";
   els.backtestAvgLoss.textContent = hasResult ? fmtMoney(avgLoss) : "--";
   els.backtestAvgLoss.className = avgLoss >= 0 ? "up" : "down";
+  els.backtestProfitFactor.textContent = hasResult ? ratioText(result.profitFactor) : "--";
+  els.backtestCalmar.textContent = hasResult ? ratioText(result.calmarRatio) : "--";
+  els.backtestSortino.textContent = hasResult ? ratioText(result.sortinoRatio) : "--";
+  els.backtestExpectancy.textContent = hasResult ? fmtMoney(expectancy) : "--";
+  els.backtestExpectancy.className = expectancy >= 0 ? "up" : "down";
   els.backtestRuntime.textContent = hasResult ? `${number.format(result.runtimeMs || 0)} ms` : "--";
 }
 
@@ -1105,6 +1127,165 @@ function renderBacktestRanking() {
       </tr>
     `;
   }).join("");
+}
+
+function backtestTradeMarkers() {
+  const trades = latestBacktest?.trades || [];
+  return trades.flatMap((trade, index) => [
+    {
+      tradeIndex: index,
+      side: "BUY",
+      time: Number(trade.buyTime),
+      price: Number(trade.buyPrice),
+      strategy: trade.strategy || latestBacktest?.strategy || "",
+      reason: trade.buyReason || ""
+    },
+    {
+      tradeIndex: index,
+      side: "SELL",
+      time: Number(trade.sellTime),
+      price: Number(trade.sellPrice),
+      strategy: trade.strategy || latestBacktest?.strategy || "",
+      reason: trade.sellReason || ""
+    }
+  ]).filter((marker) => Number.isFinite(marker.time) && Number.isFinite(marker.price));
+}
+
+function renderBacktestPriceChart(highlightMarker = null) {
+  if (!els.backtestPriceChart) return;
+  const canvas = els.backtestPriceChart;
+  const ctx = canvas.getContext("2d");
+  const candles = (latestBacktest?.candles || [])
+    .map((item) => ({
+      time: Number(item.time),
+      open: Number(item.open),
+      high: Number(item.high),
+      low: Number(item.low),
+      close: Number(item.close)
+    }))
+    .filter((item) => [item.time, item.open, item.high, item.low, item.close].every(Number.isFinite));
+  const dpr = window.devicePixelRatio || 1;
+  const width = canvas.width = Math.max(1, Math.floor(canvas.clientWidth * dpr));
+  const height = canvas.height = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  const w = width / dpr;
+  const h = height / dpr;
+  ctx.clearRect(0, 0, w, h);
+  backtestPricePoints = [];
+  if (!candles.length) {
+    ctx.fillStyle = "#657166";
+    ctx.font = "14px Segoe UI, Arial";
+    ctx.fillText("\u7b49\u5f85\u56de\u6d4bK\u7ebf\u6570\u636e", 18, 32);
+    ctx.restore();
+    return;
+  }
+  const pad = { left: 54, right: 18, top: 18, bottom: 30 };
+  const innerW = w - pad.left - pad.right;
+  const innerH = h - pad.top - pad.bottom;
+  const minPrice = Math.min(...candles.map((item) => item.low));
+  const maxPrice = Math.max(...candles.map((item) => item.high));
+  const priceRange = maxPrice - minPrice || 1;
+  const xForIndex = (index) => pad.left + (index / Math.max(1, candles.length - 1)) * innerW;
+  const yForPrice = (price) => pad.top + (1 - ((price - minPrice) / priceRange)) * innerH;
+  ctx.strokeStyle = "#dfe5dd";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i += 1) {
+    const y = pad.top + (innerH / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(w - pad.right, y);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#657166";
+  ctx.font = "11px Segoe UI, Arial";
+  ctx.fillText(fmtMoney(maxPrice), 6, pad.top + 8);
+  ctx.fillText(fmtMoney(minPrice), 6, pad.top + innerH);
+  const candleWidth = Math.max(3, Math.min(10, innerW / candles.length * 0.62));
+  candles.forEach((candle, index) => {
+    const x = xForIndex(index);
+    const openY = yForPrice(candle.open);
+    const closeY = yForPrice(candle.close);
+    const highY = yForPrice(candle.high);
+    const lowY = yForPrice(candle.low);
+    const positive = candle.close >= candle.open;
+    ctx.strokeStyle = positive ? "#167f55" : "#c23b43";
+    ctx.fillStyle = positive ? "rgba(22, 127, 85, 0.78)" : "rgba(194, 59, 67, 0.78)";
+    ctx.beginPath();
+    ctx.moveTo(x, highY);
+    ctx.lineTo(x, lowY);
+    ctx.stroke();
+    ctx.fillRect(x - candleWidth / 2, Math.min(openY, closeY), candleWidth, Math.max(1.5, Math.abs(closeY - openY)));
+  });
+  const markers = backtestTradeMarkers();
+  markers.forEach((marker) => {
+    const index = candles.findIndex((candle) => candle.time >= marker.time);
+    const candleIndex = index >= 0 ? index : candles.length - 1;
+    const x = xForIndex(candleIndex);
+    const y = yForPrice(marker.price);
+    const isBuy = marker.side === "BUY";
+    const selected = selectedBacktestTradeIndex === marker.tradeIndex || highlightMarker === marker;
+    ctx.fillStyle = isBuy ? "#167f55" : "#c23b43";
+    ctx.strokeStyle = selected ? "#17211b" : "#ffffff";
+    ctx.lineWidth = selected ? 3 : 1.5;
+    ctx.beginPath();
+    if (isBuy) {
+      ctx.moveTo(x, y - 11);
+      ctx.lineTo(x - 7, y + 7);
+      ctx.lineTo(x + 7, y + 7);
+    } else {
+      ctx.moveTo(x, y + 11);
+      ctx.lineTo(x - 7, y - 7);
+      ctx.lineTo(x + 7, y - 7);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    backtestPricePoints.push({ ...marker, x, y });
+  });
+  ctx.restore();
+}
+
+function showBacktestPricePoint(clientX, clientY) {
+  if (!els.backtestPriceChart || !backtestPricePoints.length) return;
+  const rect = els.backtestPriceChart.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  let closest = null;
+  let closestDistance = 18;
+  backtestPricePoints.forEach((point) => {
+    const distance = Math.hypot(point.x - x, point.y - y);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closest = point;
+    }
+  });
+  if (!closest) {
+    els.backtestPriceTooltip.hidden = true;
+    renderBacktestPriceChart();
+    return;
+  }
+  renderBacktestPriceChart(closest);
+  els.backtestPriceTooltip.hidden = false;
+  els.backtestPriceTooltip.style.left = `${Math.min(Math.max(closest.x, 90), rect.width - 90)}px`;
+  els.backtestPriceTooltip.style.top = `${Math.max(18, closest.y - 74)}px`;
+  els.backtestPriceTooltip.innerHTML = `
+    <strong>${closest.side} ${fmtMoney(closest.price)}</strong>
+    <span>${fmtDateTime(closest.time)}</span>
+    <span>${closest.strategy}</span>
+    <span>${closest.reason || "--"}</span>
+  `;
+}
+
+function hideBacktestPricePoint() {
+  if (els.backtestPriceTooltip) els.backtestPriceTooltip.hidden = true;
+  renderBacktestPriceChart();
+}
+
+function selectBacktestTrade(index) {
+  selectedBacktestTradeIndex = index;
+  renderBacktestTrades(latestBacktest?.trades || []);
+  renderBacktestPriceChart();
 }
 
 function renderBacktestChart(points = []) {
@@ -1176,14 +1357,16 @@ function renderBacktestChart(points = []) {
 function renderBacktestTrades(trades = []) {
   if (!els.backtestTradesBody) return;
   if (!trades.length) {
-    els.backtestTradesBody.innerHTML = `<tr><td colspan="7">\u6682\u65e0\u5b8c\u6574\u4e70\u5356\u4ea4\u6613</td></tr>`;
+    els.backtestTradesBody.innerHTML = `<tr><td colspan="8">\u6682\u65e0\u5b8c\u6574\u4e70\u5356\u4ea4\u6613</td></tr>`;
     return;
   }
-  els.backtestTradesBody.innerHTML = trades.map((trade) => {
+  els.backtestTradesBody.innerHTML = trades.map((trade, index) => {
     const pnl = Number(trade.pnl || 0);
     const returnPct = Number(trade.returnPct || 0);
+    const rowClass = selectedBacktestTradeIndex === index ? "active-row" : "";
     return `
-      <tr>
+      <tr class="${rowClass}" data-backtest-trade="${index}">
+        <td>${index + 1}</td>
         <td>${fmtDateTime(trade.buyTime)}</td>
         <td>${fmtDateTime(trade.sellTime)}</td>
         <td>${fmtMoney(trade.buyPrice)}</td>
@@ -1268,6 +1451,7 @@ async function runStrategyBacktest() {
     const data = await apiPost("/api/strategy/backtest", { strategyName, symbol, range, params, ...backtestDatePayload() });
     mergeServerState(data.state);
     latestBacktest = data.backtest;
+    selectedBacktestTradeIndex = null;
     setHint(`Backtest saved: ${strategyName} ${symbol}, return ${percentText(data.backtest.returnPct)}.`);
     render();
   } catch (error) {
@@ -1410,6 +1594,12 @@ els.strategySelect.addEventListener("change", renderStrategyControls);
 els.strategySymbolInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runStrategySignal();
 });
+els.backtestPriceChart.addEventListener("pointermove", (event) => showBacktestPricePoint(event.clientX, event.clientY));
+els.backtestPriceChart.addEventListener("pointerleave", hideBacktestPricePoint);
+els.backtestTradesBody.addEventListener("click", (event) => {
+  const row = event.target.closest("tr[data-backtest-trade]");
+  if (row) selectBacktestTrade(Number(row.dataset.backtestTrade));
+});
 els.changePasswordBtn.addEventListener("click", changePassword);
 els.newPasswordInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") changePassword();
@@ -1428,7 +1618,10 @@ els.chart.addEventListener("pointerdown", (event) => {
   showChartPoint(event.clientX);
 });
 els.chart.addEventListener("pointerleave", hideChartPoint);
-window.addEventListener("resize", () => renderMarket());
+window.addEventListener("resize", () => {
+  renderMarket();
+  renderBacktestPriceChart();
+});
 
 render();
 initAuth();
