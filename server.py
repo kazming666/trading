@@ -79,6 +79,8 @@ def fetch_json(url):
 
 def normalize_market_symbol(symbol):
     normalized = symbol.strip().upper()
+    if normalized.endswith(".SH"):
+        return f"{normalized[:-3]}.SS"
     if normalized.endswith(".HK"):
         code = normalized[:-3]
         if code.isdigit() and len(code) == 5:
@@ -137,7 +139,7 @@ def normalize_binance_quote(symbol):
 def normalize_binance_points(rows):
     points = []
     for row in rows:
-        open_time, open_price, high, low, close = row[:5]
+        open_time, open_price, high, low, close, volume = row[:6]
         points.append(
             {
                 "t": int(open_time),
@@ -146,6 +148,7 @@ def normalize_binance_points(rows):
                 "h": float(high),
                 "l": float(low),
                 "c": float(close),
+                "v": float(volume),
             }
         )
     return points
@@ -298,6 +301,7 @@ def normalize_backtest_history(symbol, range_key, start_date=None, end_date=None
     highs = quote_data.get("high") or []
     lows = quote_data.get("low") or []
     closes = quote_data.get("close") or []
+    volumes = quote_data.get("volume") or []
     points = []
     for index, (ts, close) in enumerate(zip(timestamps, closes)):
         if close is None:
@@ -306,7 +310,8 @@ def normalize_backtest_history(symbol, range_key, start_date=None, end_date=None
         open_value = float(opens[index]) if index < len(opens) and opens[index] is not None else close_value
         high_value = float(highs[index]) if index < len(highs) and highs[index] is not None else max(open_value, close_value)
         low_value = float(lows[index]) if index < len(lows) and lows[index] is not None else min(open_value, close_value)
-        points.append({"t": ts * 1000, "p": close_value, "o": open_value, "h": high_value, "l": low_value, "c": close_value})
+        volume_value = float(volumes[index]) if index < len(volumes) and volumes[index] is not None else 0
+        points.append({"t": ts * 1000, "p": close_value, "o": open_value, "h": high_value, "l": low_value, "c": close_value, "v": volume_value})
     if len(points) < 2:
         raise ValueError("No historical prices returned")
     return points
@@ -447,6 +452,152 @@ def summarize_backtest_result(result):
         "sortinoRatio": result["sortinoRatio"],
         "expectancy": result["expectancy"],
     }
+
+
+def scanner_strategy_label(strategy_name):
+    return {"moving_average": "MA", "rsi": "RSI", "macd": "MACD"}.get(strategy_name, strategy_name)
+
+
+def market_kind(symbol):
+    normalized = normalize_market_symbol(symbol)
+    if is_crypto_symbol(normalized):
+        return "crypto", "虚拟币"
+    if normalized.endswith((".SS", ".SZ")):
+        return "a", "A股"
+    if normalized.endswith(".HK"):
+        return "hk", "港股"
+    return "us", "美股"
+
+
+def default_strategy_params(strategy_name):
+    if strategy_name == "moving_average":
+        return {"fastMa": 5, "slowMa": 20, "frequencyBars": 1}
+    if strategy_name == "rsi":
+        return {"period": 14, "oversold": 30, "overbought": 70, "frequencyBars": 1}
+    if strategy_name == "macd":
+        return {"fast": 12, "slow": 26, "signal": 9, "frequencyBars": 1}
+    return {"frequencyBars": 1}
+
+
+def simple_ema(values, period):
+    if not values:
+        return []
+    multiplier = 2 / (period + 1)
+    result = [values[0]]
+    for value in values[1:]:
+        result.append((value - result[-1]) * multiplier + result[-1])
+    return result
+
+
+def recent_rsi(closes, period=14):
+    if len(closes) <= period:
+        return None
+    gains = []
+    losses = []
+    for previous, current in zip(closes[-period - 1:-1], closes[-period:]):
+        change = current - previous
+        gains.append(max(change, 0))
+        losses.append(abs(min(change, 0)))
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+    if avg_loss == 0:
+        return 100
+    return 100 - (100 / (1 + (avg_gain / avg_loss)))
+
+
+def volume_boost(points):
+    volumes = [float(point.get("v") or 0) for point in points if float(point.get("v") or 0) > 0]
+    if len(volumes) < 20:
+        return 0
+    recent = sum(volumes[-5:]) / 5
+    baseline = sum(volumes[-20:-5]) / 15
+    if baseline <= 0:
+        return 0
+    return max(-8, min(12, (recent / baseline - 1) * 12))
+
+
+def signal_strength(strategy_name, signal, points, params):
+    closes = [float(point["p"]) for point in points if point.get("p") is not None]
+    if len(closes) < 5:
+        return 0
+    price = closes[-1]
+    base = 48 if signal == "HOLD" else 62
+    direction_boost = 8 if signal in {"BUY", "SELL"} else 0
+    technical = 0
+    if strategy_name == "moving_average":
+        fast = int(params.get("fastMa") or 5)
+        slow = int(params.get("slowMa") or 20)
+        if len(closes) >= slow and price > 0:
+            fast_ma = sum(closes[-fast:]) / fast
+            slow_ma = sum(closes[-slow:]) / slow
+            technical = min(22, abs(fast_ma - slow_ma) / price * 1000)
+    elif strategy_name == "rsi":
+        rsi_value = recent_rsi(closes, int(params.get("period") or 14))
+        if rsi_value is not None:
+            if signal == "BUY":
+                technical = min(24, max(0, 50 - rsi_value) * 0.7)
+            elif signal == "SELL":
+                technical = min(24, max(0, rsi_value - 50) * 0.7)
+            else:
+                technical = min(14, abs(rsi_value - 50) * 0.35)
+    elif strategy_name == "macd":
+        fast = int(params.get("fast") or 12)
+        slow = int(params.get("slow") or 26)
+        signal_period = int(params.get("signal") or 9)
+        if len(closes) >= slow + signal_period and price > 0:
+            fast_ema = simple_ema(closes, fast)
+            slow_ema = simple_ema(closes, slow)
+            macd_line = [fast_value - slow_value for fast_value, slow_value in zip(fast_ema, slow_ema)]
+            signal_line = simple_ema(macd_line, signal_period)
+            technical = min(24, abs(macd_line[-1] - signal_line[-1]) / price * 1500)
+    score = base + direction_boost + technical + volume_boost(points)
+    if signal == "HOLD":
+        score = min(score, 72)
+    return int(max(0, min(100, round(score))))
+
+
+def scan_watchlist_symbol(symbol):
+    normalized = normalize_market_symbol(symbol)
+    quote_data = normalize_quote(normalized)
+    points = normalize_backtest_history(normalized, "1y")[-260:]
+    if len(points) < 30:
+        raise ValueError("Not enough historical data for scanning")
+    market_key, market_label = market_kind(normalized)
+    rows = []
+    for strategy_name in ("moving_average", "rsi", "macd"):
+        params = default_strategy_params(strategy_name)
+        market_data = {
+            "symbol": normalized,
+            "price": quote_data["price"],
+            "quote": quote_data,
+            "history": points,
+            "params": params,
+        }
+        signal = strategy_engine.generate_signal(strategy_name, normalized, market_data)
+        try:
+            backtest = summarize_backtest_result(run_strategy_backtest(strategy_name, normalized, points, params))
+        except Exception:
+            backtest = {"returnPct": 0, "sharpeRatio": 0, "maxDrawdown": 0}
+        rows.append(
+            {
+                "symbol": normalized,
+                "name": quote_data.get("name") or normalized,
+                "market": market_label,
+                "marketKey": market_key,
+                "currentPrice": quote_data["price"],
+                "currency": quote_data.get("currency") or "USD",
+                "strategy": strategy_name,
+                "strategyLabel": scanner_strategy_label(strategy_name),
+                "signal": signal["signal"],
+                "reason": signal.get("reason") or "",
+                "strength": signal_strength(strategy_name, signal["signal"], points, params),
+                "returnPct": backtest.get("returnPct") or 0,
+                "sharpeRatio": backtest.get("sharpeRatio") or 0,
+                "maxDrawdown": backtest.get("maxDrawdown") or 0,
+                "time": int(time.time() * 1000),
+            }
+        )
+    return rows
 
 
 def run_strategy_backtest(strategy_name, symbol, points, params):
@@ -773,6 +924,7 @@ class Handler(SimpleHTTPRequestHandler):
         "/api/state": "handle_state",
         "/api/strategy/signals": "handle_strategy_signals",
         "/api/strategy/backtests": "handle_strategy_backtests",
+        "/api/scanner": "handle_scanner",
     }
     POST_ROUTES = {
         "/api/auth/register": "handle_register",
@@ -1418,6 +1570,43 @@ class Handler(SimpleHTTPRequestHandler):
                     }
                     for row in rows
                 ],
+            },
+        )
+
+    def handle_scanner(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT symbol FROM watchlist WHERE user_id = %s ORDER BY sort_order, symbol LIMIT 40", (user["id"],))
+                symbols = [row["symbol"] for row in cur.fetchall()]
+        if not symbols:
+            self.end_json(200, {"results": [], "topOpportunities": [], "errors": [], "serverTime": int(time.time() * 1000)})
+            return
+
+        results = []
+        errors = []
+        with ThreadPoolExecutor(max_workers=min(6, len(symbols))) as executor:
+            futures = {executor.submit(scan_watchlist_symbol, symbol): symbol for symbol in symbols}
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    results.extend(future.result())
+                except Exception as error:
+                    errors.append({"symbol": symbol, "error": str(error)})
+
+        results.sort(key=lambda item: (item["strength"], item["returnPct"], item["sharpeRatio"]), reverse=True)
+        directional = [item for item in results if item["signal"] in {"BUY", "SELL"}]
+        top_source = directional or results
+        top_opportunities = sorted(top_source, key=lambda item: (item["strength"], item["returnPct"]), reverse=True)[:10]
+        self.end_json(
+            200,
+            {
+                "results": results,
+                "topOpportunities": top_opportunities,
+                "errors": errors,
+                "serverTime": int(time.time() * 1000),
             },
         )
 

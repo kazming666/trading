@@ -30,6 +30,7 @@
         <button type="button" data-page="trading" onclick="window.setPage('trading')">Trading</button>
         <button type="button" data-page="portfolio" onclick="window.setPage('portfolio')">Portfolio</button>
         <button type="button" data-page="history" onclick="window.setPage('history')">History</button>
+        <button type="button" data-page="scanner" onclick="window.setPage('scanner')">Scanner</button>
         <button type="button" data-page="signals" onclick="window.setPage('signals')">Signals</button>
         <button type="button" data-page="watchlist" onclick="window.setPage('watchlist')">Watchlist</button>
         <button type="button" data-page="settings" onclick="window.setPage('settings')">Settings</button>
@@ -261,6 +262,89 @@
             <h2>&#33258;&#36873;&#32929;</h2>
           </div>
           <div id="watchlist" class="watchlist"></div>
+        </section>
+      </section>
+
+      <section class="page-view" data-view="scanner">
+        <section class="history-panel scanner-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Scanner</h2>
+              <p class="mini-note">&#33258;&#21160;&#25195;&#25551;&#24403;&#21069;&#33258;&#36873;&#21015;&#34920;&#20013;&#30340;&#32654;&#32929;&#12289;A &#32929;&#12289;&#28207;&#32929;&#21644;&#34394;&#25311;&#24065;&#65292;&#20165;&#29992;&#20110;&#30740;&#31350;&#21644;&#21457;&#29616;&#26426;&#20250;&#12290;</p>
+            </div>
+            <div class="scanner-actions">
+              <button id="scannerRunBtn" class="primary-action" type="button">&#25195;&#25551; Watchlist</button>
+            </div>
+          </div>
+          <p id="scannerHint" class="trade-hint"></p>
+
+          <div class="scanner-top">
+            <div class="panel-head">
+              <h3>Top Opportunities</h3>
+              <span class="mini-note">&#25353;&#20449;&#21495;&#24378;&#24230;&#21644;&#22238;&#27979;&#25910;&#30410;&#25490;&#24207;&#30340;&#21069; 10 &#20010;&#26426;&#20250;</span>
+            </div>
+            <div id="scannerTop" class="scanner-top-grid"></div>
+          </div>
+
+          <div class="scanner-toolbar">
+            <label>
+              &#20449;&#21495;
+              <select id="scannerSignalFilter">
+                <option value="all">&#20840;&#37096;</option>
+                <option value="BUY">&#20165;&#30475; BUY</option>
+                <option value="SELL">&#20165;&#30475; SELL</option>
+              </select>
+            </label>
+            <label>
+              &#24066;&#22330;
+              <select id="scannerMarketFilter">
+                <option value="all">&#20840;&#37096;</option>
+                <option value="us">&#32654;&#32929;</option>
+                <option value="a">A &#32929;</option>
+                <option value="hk">&#28207;&#32929;</option>
+                <option value="crypto">&#34394;&#25311;&#24065;</option>
+              </select>
+            </label>
+            <label>
+              &#31574;&#30053;
+              <select id="scannerStrategyFilter">
+                <option value="all">&#20840;&#37096;</option>
+                <option value="moving_average">MA</option>
+                <option value="rsi">RSI</option>
+                <option value="macd">MACD</option>
+              </select>
+            </label>
+            <label>
+              &#25490;&#24207;
+              <select id="scannerSortSelect">
+                <option value="strength">&#20449;&#21495;&#24378;&#24230;</option>
+                <option value="return">&#22238;&#27979;&#25910;&#30410;&#29575;</option>
+                <option value="sharpe">Sharpe</option>
+                <option value="recent">&#26368;&#36817;&#20449;&#21495;</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="table-wrap">
+            <table class="scanner-table">
+              <thead>
+                <tr>
+                  <th>&#20195;&#30721;</th>
+                  <th>&#21517;&#31216;</th>
+                  <th>&#24066;&#22330;</th>
+                  <th>&#24403;&#21069;&#20215;&#26684;</th>
+                  <th>&#31574;&#30053;</th>
+                  <th>&#20449;&#21495;</th>
+                  <th>&#20449;&#21495;&#24378;&#24230;</th>
+                  <th>&#22238;&#27979;&#25910;&#30410;&#29575;</th>
+                  <th>Sharpe</th>
+                  <th>&#26368;&#22823;&#22238;&#25764;</th>
+                  <th>&#20449;&#21495;&#26102;&#38388;</th>
+                </tr>
+              </thead>
+              <tbody id="scannerBody"></tbody>
+            </table>
+          </div>
         </section>
       </section>
 
@@ -551,6 +635,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260603e"></script>
+    <script src="app.js?v=20260603f"></script>
   </body>
 </html>

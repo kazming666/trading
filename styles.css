@@ -320,6 +320,106 @@ label,
   padding: 14px;
 }
 
+.scanner-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.scanner-actions,
+.scanner-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.scanner-toolbar {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.scanner-toolbar label {
+  display: grid;
+  gap: 5px;
+  min-width: 150px;
+}
+
+.scanner-top {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  padding: 14px;
+}
+
+.scanner-top-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.scanner-card {
+  display: grid;
+  gap: 5px;
+  min-height: 104px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+  color: var(--ink);
+}
+
+.scanner-card:hover,
+.scanner-table tbody tr:hover {
+  border-color: var(--blue);
+  background: #eef5ff;
+}
+
+.scanner-card span,
+.scanner-card small {
+  color: var(--muted);
+}
+
+.scanner-card strong {
+  font-size: 18px;
+}
+
+.scanner-card b {
+  font-size: 22px;
+}
+
+.scanner-empty {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.scanner-table tbody tr {
+  cursor: pointer;
+}
+
+.strength-bar {
+  display: inline-block;
+  width: 72px;
+  height: 8px;
+  margin-right: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e7ece6;
+  vertical-align: middle;
+}
+
+.strength-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--gold), var(--green));
+}
+
 .strategy-param-panel {
   display: grid;
   grid-template-columns: repeat(2, minmax(220px, 1fr));
@@ -813,6 +913,10 @@ td:nth-child(3) {
     grid-template-columns: 240px minmax(0, 1fr);
   }
 
+  .scanner-top-grid {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+
   .trade-panel {
     grid-column: 1 / -1;
   }
@@ -842,13 +946,17 @@ td:nth-child(3) {
 
   .strategy-param-panel,
   .backtest-metrics,
-  .optimizer-grid {
+  .optimizer-grid,
+  .scanner-top-grid {
     grid-template-columns: 1fr;
   }
 
   .strategy-controls input,
   .strategy-controls select,
-  .strategy-controls button {
+  .strategy-controls button,
+  .scanner-toolbar label,
+  .scanner-actions,
+  .scanner-actions button {
     width: 100%;
   }
 

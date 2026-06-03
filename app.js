@@ -92,6 +92,14 @@ const els = {
   optimizerResultsBody: document.querySelector("#optimizerResultsBody"),
   tradingStockBody: document.querySelector("#tradingStockBody"),
   signalHistoryBody: document.querySelector("#signalHistoryBody"),
+  scannerRunBtn: document.querySelector("#scannerRunBtn"),
+  scannerSignalFilter: document.querySelector("#scannerSignalFilter"),
+  scannerMarketFilter: document.querySelector("#scannerMarketFilter"),
+  scannerStrategyFilter: document.querySelector("#scannerStrategyFilter"),
+  scannerSortSelect: document.querySelector("#scannerSortSelect"),
+  scannerHint: document.querySelector("#scannerHint"),
+  scannerTop: document.querySelector("#scannerTop"),
+  scannerBody: document.querySelector("#scannerBody"),
   positions: document.querySelector("#positions"),
   historyBody: document.querySelector("#historyBody"),
   clearHistoryBtn: document.querySelector("#clearHistoryBtn"),
@@ -172,6 +180,9 @@ let selectedBacktestTradeIndex = null;
 let activeEquityRange = "today";
 let activePage = "dashboard";
 let activeMarket = "stock";
+let scannerResults = [];
+let scannerTopOpportunities = [];
+let scannerLoadedAt = 0;
 
 function emptyState() {
   return {
@@ -240,6 +251,20 @@ function ratioText(value) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return "--";
   return numberValue.toFixed(2);
+}
+
+function strategyLabel(strategyName) {
+  return {
+    moving_average: "MA",
+    rsi: "RSI",
+    macd: "MACD"
+  }[strategyName] || strategyName;
+}
+
+function scannerSignalClass(signal) {
+  if (signal === "BUY") return "up";
+  if (signal === "SELL") return "down";
+  return "";
 }
 
 function startOfLocalDay(date = new Date()) {
@@ -459,6 +484,7 @@ function render() {
   renderPositions();
   renderHistory();
   renderSignalHistory();
+  renderScanner();
   renderStrategyControls();
   renderBacktestRanking();
   renderBacktestSummary(latestBacktest);
@@ -907,6 +933,9 @@ function setPage(page) {
     renderMarket();
     loadActiveHistory();
   }
+  if (activePage === "scanner" && currentUser && !scannerLoadedAt) {
+    loadScanner();
+  }
 }
 
 window.setPage = setPage;
@@ -1068,6 +1097,100 @@ function renderSignalHistory() {
       <td>${item.reason}</td>
     </tr>
   `).join("");
+}
+
+function filteredScannerResults() {
+  const signal = els.scannerSignalFilter?.value || "all";
+  const market = els.scannerMarketFilter?.value || "all";
+  const strategy = els.scannerStrategyFilter?.value || "all";
+  const sort = els.scannerSortSelect?.value || "strength";
+  const rows = scannerResults.filter((item) => {
+    if (signal !== "all" && item.signal !== signal) return false;
+    if (market !== "all" && item.marketKey !== market) return false;
+    if (strategy !== "all" && item.strategy !== strategy) return false;
+    return true;
+  });
+  const sorters = {
+    strength: (a, b) => Number(b.strength || 0) - Number(a.strength || 0),
+    return: (a, b) => Number(b.returnPct || 0) - Number(a.returnPct || 0),
+    sharpe: (a, b) => Number(b.sharpeRatio || 0) - Number(a.sharpeRatio || 0),
+    recent: (a, b) => Number(b.time || 0) - Number(a.time || 0)
+  };
+  return rows.sort(sorters[sort] || sorters.strength);
+}
+
+function renderScanner() {
+  if (!els.scannerBody || !els.scannerTop) return;
+  const topRows = scannerTopOpportunities.length ? scannerTopOpportunities : scannerResults.slice(0, 10);
+  if (!topRows.length) {
+    els.scannerTop.innerHTML = `<div class="scanner-empty">No scanner results yet.</div>`;
+  } else {
+    els.scannerTop.innerHTML = topRows.slice(0, 10).map((item) => `
+      <button class="scanner-card" type="button" data-symbol="${item.symbol}" data-strategy="${item.strategy}">
+        <span>${item.symbol}</span>
+        <strong>${fmtMoney(item.currentPrice, item.currency)}</strong>
+        <small>${strategyLabel(item.strategy)} / ${item.signal}</small>
+        <b class="${scannerSignalClass(item.signal)}">${number.format(item.strength || 0)}</b>
+      </button>
+    `).join("");
+  }
+
+  const rows = filteredScannerResults();
+  if (!rows.length) {
+    els.scannerBody.innerHTML = `<tr><td colspan="11">No scanner rows match the current filters.</td></tr>`;
+    return;
+  }
+  els.scannerBody.innerHTML = rows.map((item) => `
+    <tr data-symbol="${item.symbol}" data-strategy="${item.strategy}">
+      <td><strong>${item.symbol}</strong></td>
+      <td>${item.name || "--"}</td>
+      <td>${item.market || "--"}</td>
+      <td>${fmtMoney(item.currentPrice, item.currency)}</td>
+      <td>${strategyLabel(item.strategy)}</td>
+      <td class="${scannerSignalClass(item.signal)}">${item.signal}</td>
+      <td><span class="strength-bar"><i style="width:${Math.max(0, Math.min(100, Number(item.strength || 0)))}%"></i></span><b>${number.format(item.strength || 0)}</b></td>
+      <td class="${Number(item.returnPct || 0) >= 0 ? "up" : "down"}">${percentText(item.returnPct)}</td>
+      <td>${ratioText(item.sharpeRatio)}</td>
+      <td>${percentText(item.maxDrawdown)}</td>
+      <td>${fmtDateTime(item.time)}</td>
+    </tr>
+  `).join("");
+}
+
+async function loadScanner() {
+  if (!currentUser) {
+    if (els.scannerHint) els.scannerHint.textContent = text.loginRequired;
+    return;
+  }
+  if (els.scannerHint) els.scannerHint.textContent = "Scanning current Watchlist...";
+  try {
+    const data = await apiGet("/api/scanner");
+    scannerResults = data.results || [];
+    scannerTopOpportunities = data.topOpportunities || [];
+    scannerLoadedAt = data.serverTime || Date.now();
+    const errorNote = data.errors?.length ? ` ${data.errors.length} symbols failed.` : "";
+    if (els.scannerHint) els.scannerHint.textContent = `Scanner updated ${fmtDateTime(scannerLoadedAt)}. ${scannerResults.length} strategy rows loaded.${errorNote}`;
+    renderScanner();
+  } catch (error) {
+    if (els.scannerHint) els.scannerHint.textContent = error.message;
+  }
+}
+
+function openScannerResult(symbol, strategyName) {
+  if (!symbol || !strategyName) return;
+  if (isCryptoSymbol(symbol)) {
+    activeMarket = "crypto";
+    if (els.marketSelect) els.marketSelect.value = "crypto";
+  } else {
+    activeMarket = "stock";
+    if (els.marketSelect) els.marketSelect.value = "stock";
+  }
+  state.activeSymbol = symbol;
+  if (els.strategySymbolInput) els.strategySymbolInput.value = symbol;
+  if (els.strategySelect) els.strategySelect.value = strategyName;
+  renderStrategyControls();
+  setPage("signals");
+  setHint(`Loaded ${symbol} ${strategyLabel(strategyName)} from Scanner.`);
 }
 
 function currentStrategySymbol() {
@@ -1632,6 +1755,19 @@ els.depositInput.addEventListener("keydown", (event) => {
 els.resetBtn.addEventListener("click", resetAccount);
 els.clearHistoryBtn.addEventListener("click", clearHistory);
 els.exportTradesBtn.addEventListener("click", exportTrades);
+els.scannerRunBtn.addEventListener("click", loadScanner);
+els.scannerSignalFilter.addEventListener("change", renderScanner);
+els.scannerMarketFilter.addEventListener("change", renderScanner);
+els.scannerStrategyFilter.addEventListener("change", renderScanner);
+els.scannerSortSelect.addEventListener("change", renderScanner);
+els.scannerBody.addEventListener("click", (event) => {
+  const row = event.target.closest("tr[data-symbol]");
+  if (row) openScannerResult(row.dataset.symbol, row.dataset.strategy);
+});
+els.scannerTop.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-symbol]");
+  if (card) openScannerResult(card.dataset.symbol, card.dataset.strategy);
+});
 els.runStrategyBtn.addEventListener("click", runStrategySignal);
 els.backtestStrategyBtn.addEventListener("click", runStrategyBacktest);
 els.optimizeStrategyBtn.addEventListener("click", optimizeStrategyParams);
