@@ -100,10 +100,39 @@ CREATE TABLE IF NOT EXISTS auto_trading_settings (
     position_pct NUMERIC(10, 4) NOT NULL DEFAULT 10,
     max_positions INTEGER NOT NULL DEFAULT 3,
     max_daily_loss_pct NUMERIC(10, 4) NOT NULL DEFAULT 5,
+    max_total_drawdown_pct NUMERIC(10, 4) NOT NULL DEFAULT 20,
+    cooldown_hours NUMERIC(10, 4) NOT NULL DEFAULT 6,
+    allow_add_position BOOLEAN NOT NULL DEFAULT false,
+    scan_scope TEXT NOT NULL DEFAULT 'watchlist',
+    scheduler_status TEXT NOT NULL DEFAULT 'idle',
+    last_executed_signal TEXT NOT NULL DEFAULT '',
     enabled_at TIMESTAMPTZ,
     last_run_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS max_total_drawdown_pct NUMERIC(10, 4) NOT NULL DEFAULT 20;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS cooldown_hours NUMERIC(10, 4) NOT NULL DEFAULT 6;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS allow_add_position BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS scan_scope TEXT NOT NULL DEFAULT 'watchlist';
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS scheduler_status TEXT NOT NULL DEFAULT 'idle';
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS last_executed_signal TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS auto_trading_logs (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scan_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market TEXT NOT NULL DEFAULT '',
+    strategy TEXT NOT NULL DEFAULT '',
+    signal TEXT NOT NULL DEFAULT '',
+    score NUMERIC(10, 4) NOT NULL DEFAULT 0,
+    action TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    price NUMERIC(20, 8),
+    qty NUMERIC(20, 8),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS account_transactions (
@@ -200,3 +229,5 @@ CREATE INDEX IF NOT EXISTS idx_backtest_history_user_created ON backtest_history
 CREATE INDEX IF NOT EXISTS idx_backtest_history_user_return ON backtest_history(user_id, return_pct DESC);
 CREATE INDEX IF NOT EXISTS idx_backtest_results_user_created ON backtest_results(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_backtest_results_user_return ON backtest_results(user_id, return_pct DESC);
+CREATE INDEX IF NOT EXISTS idx_auto_trading_logs_user_created ON auto_trading_logs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_auto_trading_logs_user_scan ON auto_trading_logs(user_id, scan_id, created_at DESC);

@@ -34,8 +34,11 @@ SESSION_COOKIE = "ptd_session"
 SESSION_DAYS = 30
 DEFAULT_CASH = Decimal("100000")
 DEFAULT_SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "600519.SS", "000001.SZ", "0700.HK"]
-CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT"]
+CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"]
 PROJECT_DIR = Path(__file__).resolve().parent
+AUTO_TRADING_INTERVAL_SECONDS = 300
+AUTO_TRADING_SCAN_LIMIT = 60
+AUTO_SCHEDULER_LOCK = threading.Lock()
 
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range={range}&interval={interval}"
 YAHOO_CHART_PERIOD = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={period1}&period2={period2}&interval={interval}"
@@ -63,6 +66,12 @@ BACKTEST_RANGES = {
     "max": ("max", "1d"),
 }
 BACKTEST_SYMBOLS = {"AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD"}
+SCANNER_UNIVERSES = {
+    "us": ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD", "NFLX", "AVGO", "JPM", "COST"],
+    "a": ["600519.SS", "300750.SZ", "000001.SZ", "601318.SS", "000858.SZ", "600036.SS"],
+    "hk": ["0700.HK", "9988.HK", "3690.HK", "1299.HK", "1810.HK", "9618.HK"],
+    "crypto": CRYPTO_SYMBOLS,
+}
 
 
 def fetch_json(url):
@@ -606,6 +615,17 @@ def market_kind(symbol):
     return "us", "美股"
 
 
+def market_kind(symbol):
+    normalized = normalize_market_symbol(symbol)
+    if is_crypto_symbol(normalized):
+        return "crypto", "Crypto"
+    if normalized.endswith((".SS", ".SZ")):
+        return "a", "A-Share"
+    if normalized.endswith(".HK"):
+        return "hk", "HK"
+    return "us", "US"
+
+
 def default_strategy_params(strategy_name):
     if strategy_name == "moving_average":
         return {"fastMa": 5, "slowMa": 20, "frequencyBars": 1}
@@ -789,6 +809,51 @@ def scan_watchlist_symbol(symbol):
             }
         )
     return rows
+
+
+def scanner_symbols_for_scope(conn, user_id, scope="watchlist"):
+    requested = (scope or "watchlist").strip().lower()
+    if requested not in {"watchlist", "us", "a", "hk", "crypto", "mixed"}:
+        requested = "watchlist"
+    with conn.cursor() as cur:
+        cur.execute("SELECT symbol FROM watchlist WHERE user_id = %s ORDER BY sort_order, symbol LIMIT %s", (user_id, AUTO_TRADING_SCAN_LIMIT))
+        watchlist = [row["symbol"] for row in cur.fetchall()]
+
+    symbols = []
+    if requested == "watchlist":
+        symbols = watchlist
+    elif requested in SCANNER_UNIVERSES:
+        symbols = SCANNER_UNIVERSES[requested]
+    elif requested == "mixed":
+        symbols = watchlist + SCANNER_UNIVERSES["us"] + SCANNER_UNIVERSES["a"] + SCANNER_UNIVERSES["hk"] + SCANNER_UNIVERSES["crypto"]
+
+    normalized = []
+    seen = set()
+    for symbol in symbols:
+        item = normalize_market_symbol(symbol)
+        if item and item not in seen:
+            normalized.append(item)
+            seen.add(item)
+        if len(normalized) >= AUTO_TRADING_SCAN_LIMIT:
+            break
+    return requested, normalized
+
+
+def scan_symbols(symbols):
+    if not symbols:
+        return [], []
+    results = []
+    errors = []
+    with ThreadPoolExecutor(max_workers=min(6, len(symbols))) as executor:
+        futures = {executor.submit(scan_watchlist_symbol, symbol): symbol for symbol in symbols}
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                results.extend(future.result())
+            except Exception as error:
+                errors.append({"symbol": symbol, "error": str(error)})
+    results.sort(key=lambda item: (item["finalScore"], item["returnPct"], item["sharpeRatio"]), reverse=True)
+    return results, errors
 
 
 def run_strategy_backtest(strategy_name, symbol, points, params):
@@ -1217,11 +1282,18 @@ def clean_auto_settings_payload(data):
             value = default
         return value if value in allowed else default
 
+    scope = (data.get("scanScope") or "watchlist").strip().lower()
+    if scope not in {"watchlist", "us", "a", "hk", "crypto", "mixed"}:
+        scope = "watchlist"
     return {
         "enabled": bool(data.get("enabled")),
         "positionPct": allowed_number("positionPct", 10, {5, 10, 20, 50}),
         "maxPositions": allowed_int("maxPositions", 3, {1, 3, 5, 10}),
         "maxDailyLossPct": allowed_number("maxDailyLossPct", 5, {2, 5, 10}),
+        "maxTotalDrawdownPct": allowed_number("maxTotalDrawdownPct", 20, {10, 20, 30, 50}),
+        "cooldownHours": allowed_number("cooldownHours", 6, {1, 3, 6, 12, 24}),
+        "allowAddPosition": bool(data.get("allowAddPosition")),
+        "scanScope": scope,
     }
 
 
@@ -1238,7 +1310,8 @@ def auto_trading_stats(conn, user_id):
         cur.execute(
             """
             SELECT enabled, stopped, stop_reason, position_pct, max_positions, max_daily_loss_pct,
-                   enabled_at, last_run_at, updated_at
+                   max_total_drawdown_pct, cooldown_hours, allow_add_position, scan_scope,
+                   scheduler_status, last_executed_signal, enabled_at, last_run_at, updated_at
             FROM auto_trading_settings
             WHERE user_id = %s
             """,
@@ -1259,9 +1332,41 @@ def auto_trading_stats(conn, user_id):
         trade_stats = cur.fetchone()
         cur.execute("SELECT starting_cash FROM accounts WHERE user_id = %s", (user_id,))
         account = cur.fetchone()
+        cur.execute(
+            """
+            SELECT scan_id, symbol, market, strategy, signal, score, action, reason, price, qty, created_at
+            FROM auto_trading_logs
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT 100
+            """,
+            (user_id,),
+        )
+        all_logs = cur.fetchall()
+        latest_scan_id = all_logs[0]["scan_id"] if all_logs else None
+        latest_scan_logs = [row for row in all_logs if row["scan_id"] == latest_scan_id] if latest_scan_id else []
+        last_scan_at = all_logs[0]["created_at"] if all_logs else settings["last_run_at"]
+        cur.execute(
+            """
+            SELECT symbol, strategy, signal, created_at
+            FROM auto_trading_logs
+            WHERE user_id = %s AND action = 'EXECUTED'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        last_executed = cur.fetchone()
     starting_cash = account["starting_cash"] or Decimal("0")
     realized_pnl = trade_stats["realized_pnl"] or Decimal("0")
     cumulative_return = (realized_pnl / starting_cash * Decimal("100")) if starting_cash > 0 else Decimal("0")
+    next_scan_at = None
+    if settings["enabled"] and not settings["stopped"]:
+        base_time = settings["last_run_at"] or datetime.now(timezone.utc)
+        next_scan_at = base_time + timedelta(seconds=AUTO_TRADING_INTERVAL_SECONDS)
+    running_time_ms = None
+    if settings["enabled"] and settings["enabled_at"]:
+        running_time_ms = max(0, int((datetime.now(timezone.utc) - settings["enabled_at"]).total_seconds() * 1000))
     return {
         "enabled": settings["enabled"],
         "stopped": settings["stopped"],
@@ -1269,12 +1374,43 @@ def auto_trading_stats(conn, user_id):
         "positionPct": settings["position_pct"],
         "maxPositions": settings["max_positions"],
         "maxDailyLossPct": settings["max_daily_loss_pct"],
+        "maxTotalDrawdownPct": settings["max_total_drawdown_pct"],
+        "cooldownHours": settings["cooldown_hours"],
+        "allowAddPosition": settings["allow_add_position"],
+        "scanScope": settings["scan_scope"],
+        "schedulerStatus": settings["scheduler_status"],
+        "lastExecutedSignal": settings["last_executed_signal"],
         "enabledAt": int(settings["enabled_at"].timestamp() * 1000) if settings["enabled_at"] else None,
         "lastRunAt": int(settings["last_run_at"].timestamp() * 1000) if settings["last_run_at"] else None,
+        "lastScanAt": int(last_scan_at.timestamp() * 1000) if last_scan_at else None,
+        "nextScanAt": int(next_scan_at.timestamp() * 1000) if next_scan_at else None,
         "updatedAt": int(settings["updated_at"].timestamp() * 1000) if settings["updated_at"] else None,
         "todayTrades": int(trade_stats["today_trades"] or 0),
         "totalTrades": int(trade_stats["total_trades"] or 0),
         "cumulativeReturn": cumulative_return,
+        "runningTimeMs": running_time_ms,
+        "lastExecuted": {
+            "symbol": last_executed["symbol"],
+            "strategy": last_executed["strategy"],
+            "signal": last_executed["signal"],
+            "time": int(last_executed["created_at"].timestamp() * 1000),
+        } if last_executed else None,
+        "logs": [
+            {
+                "scanId": row["scan_id"],
+                "symbol": row["symbol"],
+                "market": row["market"],
+                "strategy": row["strategy"],
+                "signal": row["signal"],
+                "score": row["score"],
+                "action": row["action"],
+                "reason": row["reason"],
+                "price": row["price"],
+                "qty": row["qty"],
+                "time": int(row["created_at"].timestamp() * 1000),
+            }
+            for row in latest_scan_logs
+        ],
     }
 
 
@@ -1300,9 +1436,89 @@ def account_daily_loss_pct(conn, user_id):
     return loss / start_equity * Decimal("100")
 
 
-def run_auto_trading_cycle(user_id, scanner_results=None):
+def account_total_drawdown_pct(conn, user_id):
+    totals = portfolio_totals(conn, user_id)
+    current_equity = totals["equity"]
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT GREATEST(COALESCE(MAX(equity), 0), %s) AS peak_equity
+            FROM equity_history
+            WHERE user_id = %s
+            """,
+            (current_equity, user_id),
+        )
+        row = cur.fetchone()
+    peak_equity = row["peak_equity"] or current_equity
+    if peak_equity <= 0:
+        return Decimal("0")
+    return max(Decimal("0"), peak_equity - current_equity) / peak_equity * Decimal("100")
+
+
+def record_auto_log(conn, user_id, scan_id, item, action, reason, price=None, qty=None):
+    symbol = normalize_market_symbol(str(item.get("symbol") or "ACCOUNT"))
+    market = item.get("market") or market_kind(symbol)[1]
+    strategy = item.get("strategy") or item.get("strategyLabel") or ""
+    signal = item.get("signal") or ""
+    score = Decimal(str(item.get("finalScore") or item.get("score") or 0))
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO auto_trading_logs
+                (user_id, scan_id, symbol, market, strategy, signal, score, action, reason, price, qty)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                user_id,
+                scan_id,
+                symbol,
+                market,
+                strategy,
+                signal,
+                score,
+                action,
+                reason,
+                Decimal(str(price)) if price is not None else None,
+                Decimal(str(qty)) if qty is not None else None,
+            ),
+        )
+    return {
+        "scanId": scan_id,
+        "symbol": symbol,
+        "market": market,
+        "strategy": strategy,
+        "signal": signal,
+        "score": score,
+        "action": action,
+        "reason": reason,
+        "price": price,
+        "qty": qty,
+        "time": int(time.time() * 1000),
+    }
+
+
+def auto_trade_in_cooldown(conn, user_id, symbol, cooldown_hours):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1
+            FROM trades
+            WHERE user_id = %s
+              AND symbol = %s
+              AND execution_source = 'auto'
+              AND executed_at >= now() - (%s::text || ' hours')::interval
+            LIMIT 1
+            """,
+            (user_id, symbol, float(cooldown_hours)),
+        )
+        return cur.fetchone() is not None
+
+
+def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, triggered_by="scheduler"):
     actions = []
     skipped = []
+    logs = []
+    scan_id = secrets.token_hex(8)
     with db_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1317,10 +1533,12 @@ def run_auto_trading_cycle(user_id, scanner_results=None):
             settings = cur.fetchone()
         if not settings["enabled"] or settings["stopped"]:
             conn.commit()
-            return {"actions": actions, "skipped": skipped, "stateChanged": False, "settings": auto_trading_stats(conn, user_id)}
+            return {"actions": actions, "skipped": skipped, "logs": logs, "stateChanged": False, "settings": auto_trading_stats(conn, user_id)}
 
         daily_loss = account_daily_loss_pct(conn, user_id)
         if daily_loss >= settings["max_daily_loss_pct"]:
+            reason = f"Max daily loss reached: {daily_loss:.2f}%"
+            logs.append(record_auto_log(conn, user_id, scan_id, {"symbol": "ACCOUNT", "signal": "RISK", "strategy": "risk", "finalScore": 0}, "STOPPED", reason))
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -1328,72 +1546,185 @@ def run_auto_trading_cycle(user_id, scanner_results=None):
                     SET enabled = false, stopped = true, stop_reason = %s, updated_at = now()
                     WHERE user_id = %s
                     """,
-                    (f"Max daily loss reached: {daily_loss:.2f}%", user_id),
+                    (reason, user_id),
                 )
             conn.commit()
-            return {"actions": actions, "skipped": skipped, "stateChanged": True, "settings": auto_trading_stats(conn, user_id)}
+            return {"actions": actions, "skipped": skipped, "logs": logs, "stateChanged": True, "settings": auto_trading_stats(conn, user_id)}
+
+        total_drawdown = account_total_drawdown_pct(conn, user_id)
+        if total_drawdown >= settings["max_total_drawdown_pct"]:
+            reason = f"Max total drawdown reached: {total_drawdown:.2f}%"
+            logs.append(record_auto_log(conn, user_id, scan_id, {"symbol": "ACCOUNT", "signal": "RISK", "strategy": "risk", "finalScore": 0}, "STOPPED", reason))
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE auto_trading_settings
+                    SET enabled = false, stopped = true, stop_reason = %s, updated_at = now()
+                    WHERE user_id = %s
+                    """,
+                    (reason, user_id),
+                )
+            conn.commit()
+            return {"actions": actions, "skipped": skipped, "logs": logs, "stateChanged": True, "settings": auto_trading_stats(conn, user_id)}
 
         if scanner_results is None:
-            with conn.cursor() as cur:
-                cur.execute("SELECT symbol FROM watchlist WHERE user_id = %s ORDER BY sort_order, symbol LIMIT 40", (user_id,))
-                symbols = [row["symbol"] for row in cur.fetchall()]
-            scanner_results = []
-            for symbol in symbols:
-                try:
-                    scanner_results.extend(scan_watchlist_symbol(symbol))
-                except Exception as error:
-                    skipped.append({"symbol": symbol, "reason": str(error)})
+            scope, symbols = scanner_symbols_for_scope(conn, user_id, scan_scope or settings["scan_scope"])
+            scanner_results, scan_errors = scan_symbols(symbols)
+            for error in scan_errors:
+                skipped.append({"symbol": error["symbol"], "reason": error["error"]})
+                logs.append(record_auto_log(conn, user_id, scan_id, {"symbol": error["symbol"], "signal": "ERROR", "strategy": "scanner"}, "SKIPPED", error["error"]))
+        else:
+            scope = scan_scope or settings["scan_scope"]
 
-        directional = [item for item in scanner_results if item.get("signal") in {"BUY", "SELL"}]
-        directional = [item for item in directional if item.get("passesFilter", True)]
-        directional.sort(key=lambda item: (item.get("finalScore") or 0, item.get("returnPct") or 0), reverse=True)
+        ranked_results = sorted(scanner_results, key=lambda item: (item.get("finalScore") or 0, item.get("returnPct") or 0), reverse=True)
         with conn.cursor() as cur:
             cur.execute("SELECT symbol, qty FROM positions WHERE user_id = %s AND qty > 0", (user_id,))
             positions = {row["symbol"]: row["qty"] for row in cur.fetchall()}
             cur.execute("SELECT cash_balance FROM accounts WHERE user_id = %s", (user_id,))
             cash_balance = cur.fetchone()["cash_balance"]
 
-        for item in directional:
+        for item in ranked_results:
             symbol = normalize_market_symbol(item["symbol"])
             signal = item["signal"]
             strategy_name = item.get("strategy") or item.get("strategyLabel") or "scanner"
+            if signal == "HOLD":
+                skipped.append({"symbol": symbol, "signal": signal, "reason": "HOLD signal."})
+                logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", "HOLD signal."))
+                continue
+            if signal not in {"BUY", "SELL"}:
+                skipped.append({"symbol": symbol, "signal": signal, "reason": "Unsupported signal."})
+                logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", "Unsupported signal."))
+                continue
+            if not item.get("passesFilter", True):
+                reason = "Failed quality filter: Sharpe <= 0, Return <= 0, Drawdown >= 35%, or Trades < 5."
+                skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
+                logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason))
+                continue
             try:
                 quote_data = normalize_quote(symbol)
                 price = Decimal(str(quote_data["price"]))
                 if signal == "BUY":
-                    if symbol in positions:
-                        skipped.append({"symbol": symbol, "signal": signal, "reason": "Position already open."})
+                    already_holding = symbol in positions
+                    if already_holding and not settings["allow_add_position"]:
+                        reason = "Already Holding Position."
+                        skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
+                        logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason, price=price))
                         continue
-                    if len(positions) >= int(settings["max_positions"]):
-                        skipped.append({"symbol": symbol, "signal": signal, "reason": "Max holdings reached."})
+                    if auto_trade_in_cooldown(conn, user_id, symbol, settings["cooldown_hours"]):
+                        reason = f"Cooldown Active: {float(settings['cooldown_hours']):g} hours."
+                        skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
+                        logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason, price=price))
+                        continue
+                    if not already_holding and len(positions) >= int(settings["max_positions"]):
+                        reason = "Max Positions Reached."
+                        skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
+                        logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason, price=price))
                         continue
                     totals = portfolio_totals(conn, user_id)
                     target_value = totals["equity"] * Decimal(str(settings["position_pct"])) / Decimal("100")
                     target_value = min(target_value, cash_balance)
                     if target_value <= 0 or price <= 0:
-                        skipped.append({"symbol": symbol, "signal": signal, "reason": "No available cash."})
+                        reason = "Insufficient Cash."
+                        skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
+                        logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason, price=price))
                         continue
                     qty = target_value / price
                     fill = execute_paper_trade(conn, user_id, symbol, "buy", qty, quote_data, "auto", strategy_name)
-                    positions[symbol] = fill["qty"]
+                    positions[symbol] = positions.get(symbol, Decimal("0")) + fill["qty"]
                     cash_balance -= fill["value"]
                     actions.append({"symbol": symbol, "side": "buy", "strategy": strategy_name, "qty": fill["qty"], "price": fill["price"], "value": fill["value"]})
+                    reason = "Position Added" if already_holding else "Position Opened"
+                    logs.append(record_auto_log(conn, user_id, scan_id, item, "EXECUTED", reason, price=fill["price"], qty=fill["qty"]))
                 elif signal == "SELL":
                     qty = positions.get(symbol)
                     if not qty:
-                        skipped.append({"symbol": symbol, "signal": signal, "reason": "No open position to close."})
+                        reason = "No Position."
+                        skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
+                        logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason, price=price))
                         continue
                     fill = execute_paper_trade(conn, user_id, symbol, "sell", qty, quote_data, "auto", strategy_name)
                     positions.pop(symbol, None)
                     cash_balance += fill["value"]
                     actions.append({"symbol": symbol, "side": "sell", "strategy": strategy_name, "qty": fill["qty"], "price": fill["price"], "value": fill["value"], "realizedPnl": fill["realizedPnl"]})
+                    logs.append(record_auto_log(conn, user_id, scan_id, item, "EXECUTED", "Position Closed", price=fill["price"], qty=fill["qty"]))
             except Exception as error:
-                skipped.append({"symbol": symbol, "signal": signal, "reason": str(error)})
+                reason = str(error)
+                skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
+                logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason))
 
         with conn.cursor() as cur:
-            cur.execute("UPDATE auto_trading_settings SET last_run_at = now(), updated_at = now() WHERE user_id = %s", (user_id,))
+            last_signal = ""
+            if actions:
+                latest = actions[-1]
+                last_signal = f"{latest['symbol']} {str(latest['side']).upper()} {latest['strategy']}"
+            cur.execute(
+                """
+                UPDATE auto_trading_settings
+                SET last_run_at = now(),
+                    scheduler_status = %s,
+                    last_executed_signal = CASE WHEN %s <> '' THEN %s ELSE last_executed_signal END,
+                    updated_at = now()
+                WHERE user_id = %s
+                """,
+                ("running", last_signal, last_signal, user_id),
+            )
         conn.commit()
-        return {"actions": actions, "skipped": skipped, "stateChanged": bool(actions), "settings": auto_trading_stats(conn, user_id)}
+        return {"actions": actions, "skipped": skipped, "logs": logs, "scope": scope, "stateChanged": bool(actions), "settings": auto_trading_stats(conn, user_id)}
+
+
+def start_auto_trading_scheduler():
+    if not db_ready():
+        return
+
+    def due_users():
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT user_id
+                    FROM auto_trading_settings
+                    WHERE enabled = true
+                      AND stopped = false
+                      AND (
+                        last_run_at IS NULL
+                        OR last_run_at <= now() - (%s::text || ' seconds')::interval
+                      )
+                    ORDER BY COALESCE(last_run_at, '1970-01-01'::timestamptz) ASC
+                    LIMIT 20
+                    """,
+                    (AUTO_TRADING_INTERVAL_SECONDS,),
+                )
+                return [row["user_id"] for row in cur.fetchall()]
+
+    def run():
+        while True:
+            try:
+                if AUTO_SCHEDULER_LOCK.acquire(blocking=False):
+                    try:
+                        for user_id in due_users():
+                            try:
+                                run_auto_trading_cycle(user_id, triggered_by="scheduler")
+                            except Exception as error:
+                                with db_connect() as conn:
+                                    scan_id = secrets.token_hex(8)
+                                    record_auto_log(conn, user_id, scan_id, {"symbol": "ACCOUNT", "signal": "ERROR", "strategy": "scheduler"}, "ERROR", str(error))
+                                    with conn.cursor() as cur:
+                                        cur.execute(
+                                            """
+                                            UPDATE auto_trading_settings
+                                            SET scheduler_status = 'error', stop_reason = %s, updated_at = now()
+                                            WHERE user_id = %s
+                                            """,
+                                            (str(error), user_id),
+                                        )
+                                    conn.commit()
+                    finally:
+                        AUTO_SCHEDULER_LOCK.release()
+            finally:
+                time.sleep(15)
+
+    thread = threading.Thread(target=run, name="auto-trading-scheduler", daemon=True)
+    thread.start()
 
 
 def start_equity_snapshot_worker():
@@ -2080,38 +2411,29 @@ class Handler(SimpleHTTPRequestHandler):
         user = self.require_user()
         if not user:
             return
+        query_data = parse_qs(parsed.query)
+        requested_scope = (query_data.get("scope") or ["watchlist"])[0]
         with db_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT symbol FROM watchlist WHERE user_id = %s ORDER BY sort_order, symbol LIMIT 40", (user["id"],))
-                symbols = [row["symbol"] for row in cur.fetchall()]
+            scope, symbols = scanner_symbols_for_scope(conn, user["id"], requested_scope)
         if not symbols:
-            self.end_json(200, {"results": [], "topOpportunities": [], "errors": [], "serverTime": int(time.time() * 1000)})
+            self.end_json(200, {"scope": scope, "results": [], "topOpportunities": [], "errors": [], "serverTime": int(time.time() * 1000)})
             return
 
-        results = []
-        errors = []
-        with ThreadPoolExecutor(max_workers=min(6, len(symbols))) as executor:
-            futures = {executor.submit(scan_watchlist_symbol, symbol): symbol for symbol in symbols}
-            for future in as_completed(futures):
-                symbol = futures[future]
-                try:
-                    results.extend(future.result())
-                except Exception as error:
-                    errors.append({"symbol": symbol, "error": str(error)})
-
-        results.sort(key=lambda item: (item["finalScore"], item["returnPct"], item["sharpeRatio"]), reverse=True)
+        results, errors = scan_symbols(symbols)
         qualified = [item for item in results if item.get("passesFilter")]
         directional = [item for item in qualified if item["signal"] in {"BUY", "SELL"}]
         top_source = directional or qualified
         top_opportunities = sorted(top_source, key=lambda item: (item["finalScore"], item["returnPct"]), reverse=True)[:10]
-        auto_result = run_auto_trading_cycle(user["id"], results)
+        with db_connect() as conn:
+            auto_payload = auto_trading_stats(conn, user["id"])
         self.end_json(
             200,
             {
+                "scope": scope,
                 "results": results,
                 "topOpportunities": top_opportunities,
                 "errors": errors,
-                "autoTrading": auto_result,
+                "autoTrading": {"settings": auto_payload, "actions": [], "skipped": [], "logs": auto_payload.get("logs", [])},
                 "serverTime": int(time.time() * 1000),
             },
         )
@@ -2181,8 +2503,11 @@ class Handler(SimpleHTTPRequestHandler):
                 cur.execute(
                     """
                     INSERT INTO auto_trading_settings
-                        (user_id, enabled, stopped, stop_reason, position_pct, max_positions, max_daily_loss_pct, enabled_at, updated_at)
-                    VALUES (%s, %s, false, '', %s, %s, %s, CASE WHEN %s THEN now() ELSE NULL END, now())
+                        (user_id, enabled, stopped, stop_reason, position_pct, max_positions, max_daily_loss_pct,
+                         max_total_drawdown_pct, cooldown_hours, allow_add_position, scan_scope, scheduler_status,
+                         enabled_at, updated_at)
+                    VALUES (%s, %s, false, '', %s, %s, %s, %s, %s, %s, %s, %s,
+                            CASE WHEN %s THEN now() ELSE NULL END, now())
                     ON CONFLICT (user_id)
                     DO UPDATE SET
                         enabled = EXCLUDED.enabled,
@@ -2191,6 +2516,11 @@ class Handler(SimpleHTTPRequestHandler):
                         position_pct = EXCLUDED.position_pct,
                         max_positions = EXCLUDED.max_positions,
                         max_daily_loss_pct = EXCLUDED.max_daily_loss_pct,
+                        max_total_drawdown_pct = EXCLUDED.max_total_drawdown_pct,
+                        cooldown_hours = EXCLUDED.cooldown_hours,
+                        allow_add_position = EXCLUDED.allow_add_position,
+                        scan_scope = EXCLUDED.scan_scope,
+                        scheduler_status = EXCLUDED.scheduler_status,
                         enabled_at = CASE
                             WHEN EXCLUDED.enabled AND NOT auto_trading_settings.enabled THEN now()
                             WHEN EXCLUDED.enabled THEN auto_trading_settings.enabled_at
@@ -2204,6 +2534,11 @@ class Handler(SimpleHTTPRequestHandler):
                         Decimal(str(settings["positionPct"])),
                         settings["maxPositions"],
                         Decimal(str(settings["maxDailyLossPct"])),
+                        Decimal(str(settings["maxTotalDrawdownPct"])),
+                        Decimal(str(settings["cooldownHours"])),
+                        settings["allowAddPosition"],
+                        settings["scanScope"],
+                        "running" if settings["enabled"] else "disabled",
                         settings["enabled"],
                     ),
                 )
@@ -2215,7 +2550,7 @@ class Handler(SimpleHTTPRequestHandler):
         user = self.require_user()
         if not user:
             return
-        result = run_auto_trading_cycle(user["id"])
+        result = run_auto_trading_cycle(user["id"], triggered_by="manual")
         self.end_json(200, {"autoTrading": result, "state": self.load_state(user["id"])})
 
     def handle_add_watchlist(self, parsed):
@@ -2602,6 +2937,7 @@ class Handler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     init_db()
     start_equity_snapshot_worker()
+    start_auto_trading_scheduler()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Real-market paper trading server: http://{HOST}:{PORT}/")
     server.serve_forever()

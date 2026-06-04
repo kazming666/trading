@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>&#27169;&#25311;&#32929;&#31080;&#20132;&#26131;&#21488;</title>
-    <link rel="stylesheet" href="styles.css?v=20260602c">
+    <link rel="stylesheet" href="styles.css?v=20260605a">
   </head>
   <body>
     <main class="app-shell">
@@ -274,7 +274,18 @@
               <p class="mini-note">&#33258;&#21160;&#25195;&#25551;&#24403;&#21069;&#33258;&#36873;&#21015;&#34920;&#20013;&#30340;&#32654;&#32929;&#12289;A &#32929;&#12289;&#28207;&#32929;&#21644;&#34394;&#25311;&#24065;&#65292;&#20165;&#29992;&#20110;&#30740;&#31350;&#21644;&#21457;&#29616;&#26426;&#20250;&#12290;</p>
             </div>
             <div class="scanner-actions">
-              <button id="scannerRunBtn" class="primary-action" type="button">&#25195;&#25551; Watchlist</button>
+              <label>
+                Scan Source
+                <select id="scannerScopeSelect">
+                  <option value="watchlist" selected>Watchlist</option>
+                  <option value="us">US Stocks</option>
+                  <option value="a">A-Shares</option>
+                  <option value="hk">HK Stocks</option>
+                  <option value="crypto">Crypto</option>
+                  <option value="mixed">Mixed</option>
+                </select>
+              </label>
+              <button id="scannerRunBtn" class="primary-action" type="button">Scan</button>
             </div>
           </div>
           <p id="scannerHint" class="trade-hint"></p>
@@ -399,9 +410,40 @@
               <span>&#32047;&#35745;&#25910;&#30410;&#29575;</span>
               <strong id="autoCumulativeReturn">0.00%</strong>
             </div>
+            <div class="metric">
+              <span>Last Scan Time</span>
+              <strong id="autoLastScanAt">--</strong>
+            </div>
+            <div class="metric">
+              <span>Next Scan Time</span>
+              <strong id="autoNextScanAt">--</strong>
+            </div>
+            <div class="metric">
+              <span>Last Executed Signal</span>
+              <strong id="autoLastExecutedSignal">--</strong>
+            </div>
+            <div class="metric">
+              <span>Scheduler Status</span>
+              <strong id="autoSchedulerStatus">--</strong>
+            </div>
+            <div class="metric">
+              <span>Running Time</span>
+              <strong id="autoRunningTime">--</strong>
+            </div>
           </section>
 
           <div class="auto-settings-grid">
+            <label>
+              Scan Source
+              <select id="autoScanScopeSelect">
+                <option value="watchlist" selected>Watchlist</option>
+                <option value="us">US Stocks</option>
+                <option value="a">A-Shares</option>
+                <option value="hk">HK Stocks</option>
+                <option value="crypto">Crypto</option>
+                <option value="mixed">Mixed</option>
+              </select>
+            </label>
             <label>
               &#21333;&#31508;&#20179;&#20301;
               <select id="autoPositionPctSelect">
@@ -428,6 +470,29 @@
                 <option value="10">10%</option>
               </select>
             </label>
+            <label>
+              Max Total Drawdown
+              <select id="autoMaxTotalDrawdownSelect">
+                <option value="10">10%</option>
+                <option value="20" selected>20%</option>
+                <option value="30">30%</option>
+                <option value="50">50%</option>
+              </select>
+            </label>
+            <label>
+              Cooldown
+              <select id="autoCooldownSelect">
+                <option value="1">1 hour</option>
+                <option value="3">3 hours</option>
+                <option value="6" selected>6 hours</option>
+                <option value="12">12 hours</option>
+                <option value="24">24 hours</option>
+              </select>
+            </label>
+            <label class="checkbox-line">
+              <input id="autoAllowAddInput" type="checkbox">
+              <span>Allow adding to existing positions</span>
+            </label>
             <div class="auto-actions">
               <button id="autoSaveBtn" class="primary-action" type="button">&#20445;&#23384;&#35774;&#32622;</button>
               <button id="autoRunBtn" class="ghost-btn" type="button">&#31435;&#21363;&#25195;&#25551;&#24182;&#27169;&#25311;&#25191;&#34892;</button>
@@ -438,12 +503,14 @@
             <table class="auto-action-table">
               <thead>
                 <tr>
-                  <th>&#20195;&#30721;</th>
-                  <th>&#26041;&#21521;</th>
-                  <th>&#31574;&#30053;</th>
-                  <th>&#25968;&#37327;</th>
-                  <th>&#20215;&#26684;</th>
-                  <th>&#37329;&#39069;</th>
+                  <th>Ticker</th>
+                  <th>Market</th>
+                  <th>Strategy</th>
+                  <th>Signal</th>
+                  <th>Score</th>
+                  <th>Action</th>
+                  <th>Reason</th>
+                  <th>Timestamp</th>
                 </tr>
               </thead>
               <tbody id="autoActionBody"></tbody>
@@ -474,6 +541,7 @@
                 <option value="ETHUSDT"></option>
                 <option value="SOLUSDT"></option>
                 <option value="BNBUSDT"></option>
+                <option value="XRPUSDT"></option>
                 <option value="DOGEUSDT"></option>
               </datalist>
               <select id="strategySelect" aria-label="strategy">
@@ -817,6 +885,6 @@ ETHUSDT</textarea>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260604a"></script>
+    <script src="app.js?v=20260605a"></script>
   </body>
 </html>

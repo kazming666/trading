@@ -1,5 +1,5 @@
 const DEFAULT_SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "600519.SS", "000001.SZ", "0700.HK"];
-const DEFAULT_CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT"];
+const DEFAULT_CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"];
 const RANGE_LABELS = {
   "1d": "\u0031\u5929",
   "1wk": "\u0031\u5468",
@@ -110,6 +110,7 @@ const els = {
   tradingStockBody: document.querySelector("#tradingStockBody"),
   signalHistoryBody: document.querySelector("#signalHistoryBody"),
   scannerRunBtn: document.querySelector("#scannerRunBtn"),
+  scannerScopeSelect: document.querySelector("#scannerScopeSelect"),
   scannerSignalFilter: document.querySelector("#scannerSignalFilter"),
   scannerMarketFilter: document.querySelector("#scannerMarketFilter"),
   scannerStrategyFilter: document.querySelector("#scannerStrategyFilter"),
@@ -125,9 +126,18 @@ const els = {
   autoTodayTrades: document.querySelector("#autoTodayTrades"),
   autoTotalTrades: document.querySelector("#autoTotalTrades"),
   autoCumulativeReturn: document.querySelector("#autoCumulativeReturn"),
+  autoLastScanAt: document.querySelector("#autoLastScanAt"),
+  autoNextScanAt: document.querySelector("#autoNextScanAt"),
+  autoLastExecutedSignal: document.querySelector("#autoLastExecutedSignal"),
+  autoSchedulerStatus: document.querySelector("#autoSchedulerStatus"),
+  autoRunningTime: document.querySelector("#autoRunningTime"),
+  autoScanScopeSelect: document.querySelector("#autoScanScopeSelect"),
   autoPositionPctSelect: document.querySelector("#autoPositionPctSelect"),
   autoMaxPositionsSelect: document.querySelector("#autoMaxPositionsSelect"),
   autoMaxLossSelect: document.querySelector("#autoMaxLossSelect"),
+  autoMaxTotalDrawdownSelect: document.querySelector("#autoMaxTotalDrawdownSelect"),
+  autoCooldownSelect: document.querySelector("#autoCooldownSelect"),
+  autoAllowAddInput: document.querySelector("#autoAllowAddInput"),
   autoSaveBtn: document.querySelector("#autoSaveBtn"),
   autoRunBtn: document.querySelector("#autoRunBtn"),
   autoHint: document.querySelector("#autoHint"),
@@ -219,7 +229,7 @@ let activeMarket = "stock";
 let scannerResults = [];
 let scannerTopOpportunities = [];
 let scannerLoadedAt = 0;
-let latestAutoActions = [];
+let latestAutoLogs = [];
 let autoRunTimer;
 
 function emptyState() {
@@ -245,11 +255,21 @@ function emptyState() {
       positionPct: 10,
       maxPositions: 3,
       maxDailyLossPct: 5,
+      maxTotalDrawdownPct: 20,
+      cooldownHours: 6,
+      allowAddPosition: false,
+      scanScope: "watchlist",
+      schedulerStatus: "idle",
+      lastExecutedSignal: "",
       enabledAt: null,
       lastRunAt: null,
+      lastScanAt: null,
+      nextScanAt: null,
+      runningTimeMs: null,
       todayTrades: 0,
       totalTrades: 0,
-      cumulativeReturn: 0
+      cumulativeReturn: 0,
+      logs: []
     },
     stats: {
       totalTrades: 0,
@@ -282,6 +302,17 @@ function fmtDateTime(value) {
 function fmtDate(value) {
   if (!value) return "--";
   return new Date(value).toLocaleDateString("zh-CN");
+}
+
+function fmtDuration(ms) {
+  if (!ms) return "--";
+  const totalSeconds = Math.max(0, Math.floor(Number(ms) / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (days) return `${days}d ${hours}h ${minutes}m`;
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 function isoDate(value) {
@@ -1229,9 +1260,13 @@ function renderAutoTrading() {
   const enabled = Boolean(auto.enabled);
   const stopped = Boolean(auto.stopped);
   els.autoEnabledInput.checked = enabled;
+  els.autoScanScopeSelect.value = auto.scanScope || "watchlist";
   els.autoPositionPctSelect.value = String(Number(auto.positionPct || 10));
   els.autoMaxPositionsSelect.value = String(Number(auto.maxPositions || 3));
   els.autoMaxLossSelect.value = String(Number(auto.maxDailyLossPct || 5));
+  els.autoMaxTotalDrawdownSelect.value = String(Number(auto.maxTotalDrawdownPct || 20));
+  els.autoCooldownSelect.value = String(Number(auto.cooldownHours || 6));
+  els.autoAllowAddInput.checked = Boolean(auto.allowAddPosition);
   els.autoRunStatus.textContent = stopped ? "Stopped" : enabled ? "Running" : "Disabled";
   els.autoRunStatus.className = stopped ? "down" : enabled ? "up" : "";
   els.autoEnabledAt.textContent = auto.enabledAt ? fmtDateTime(auto.enabledAt) : "--";
@@ -1240,6 +1275,12 @@ function renderAutoTrading() {
   const cumulativeReturn = Number(auto.cumulativeReturn || 0);
   els.autoCumulativeReturn.textContent = percentText(cumulativeReturn);
   els.autoCumulativeReturn.className = cumulativeReturn >= 0 ? "up" : "down";
+  els.autoLastScanAt.textContent = auto.lastScanAt ? fmtDateTime(auto.lastScanAt) : "--";
+  els.autoNextScanAt.textContent = auto.nextScanAt ? fmtDateTime(auto.nextScanAt) : "--";
+  els.autoLastExecutedSignal.textContent = auto.lastExecutedSignal || (auto.lastExecuted ? `${auto.lastExecuted.symbol} ${auto.lastExecuted.signal}` : "--");
+  els.autoSchedulerStatus.textContent = stopped ? "Stopped" : enabled ? (auto.schedulerStatus || "running") : "disabled";
+  els.autoSchedulerStatus.className = stopped ? "down" : enabled ? "up" : "";
+  els.autoRunningTime.textContent = fmtDuration(auto.runningTimeMs);
   if (auto.stopReason) {
     els.autoHint.textContent = auto.stopReason;
     els.autoHint.className = "trade-hint warning";
@@ -1247,18 +1288,21 @@ function renderAutoTrading() {
     els.autoHint.textContent = "Auto Trading only creates simulated orders in this paper account.";
     els.autoHint.className = "trade-hint";
   }
-  if (!latestAutoActions.length) {
-    els.autoActionBody.innerHTML = `<tr><td colspan="6">No automatic paper trades in the latest run.</td></tr>`;
+  latestAutoLogs = (auto.logs && auto.logs.length ? auto.logs : latestAutoLogs) || [];
+  if (!latestAutoLogs.length) {
+    els.autoActionBody.innerHTML = `<tr><td colspan="8">No scan logs yet. Enable Auto Trading or click run now.</td></tr>`;
     return;
   }
-  els.autoActionBody.innerHTML = latestAutoActions.map((item) => `
+  els.autoActionBody.innerHTML = latestAutoLogs.map((item) => `
     <tr>
       <td>${item.symbol}</td>
-      <td class="${item.side === "buy" ? "up" : "down"}">${String(item.side || "").toUpperCase()}</td>
+      <td>${item.market || "--"}</td>
       <td>${strategyLabel(item.strategy)}</td>
-      <td>${number.format(item.qty || 0)}</td>
-      <td>${fmtMoney(item.price)}</td>
-      <td>${fmtMoney(item.value)}</td>
+      <td class="${scannerSignalClass(item.signal)}">${item.signal || "--"}</td>
+      <td>${Number(item.score || 0).toFixed(1)}</td>
+      <td class="${item.action === "EXECUTED" ? "up" : item.action === "STOPPED" || item.action === "ERROR" ? "down" : ""}">${item.action}</td>
+      <td>${item.reason || "--"}</td>
+      <td>${fmtDateTime(item.time)}</td>
     </tr>
   `).join("");
 }
@@ -1268,16 +1312,17 @@ async function loadScanner() {
     if (els.scannerHint) els.scannerHint.textContent = text.loginRequired;
     return;
   }
-  if (els.scannerHint) els.scannerHint.textContent = "Scanning current Watchlist...";
+  const scope = els.scannerScopeSelect?.value || "watchlist";
+  if (els.scannerHint) els.scannerHint.textContent = `Scanning ${scope}...`;
   try {
-    const data = await apiGet("/api/scanner");
+    const data = await apiGet(`/api/scanner?scope=${encodeURIComponent(scope)}`);
     scannerResults = data.results || [];
     scannerTopOpportunities = data.topOpportunities || [];
     scannerLoadedAt = data.serverTime || Date.now();
     if (data.autoTrading?.settings) state.autoTrading = data.autoTrading.settings;
-    latestAutoActions = data.autoTrading?.actions || latestAutoActions;
+    latestAutoLogs = data.autoTrading?.logs || state.autoTrading.logs || latestAutoLogs;
     const errorNote = data.errors?.length ? ` ${data.errors.length} symbols failed.` : "";
-    if (els.scannerHint) els.scannerHint.textContent = `Scanner updated ${fmtDateTime(scannerLoadedAt)}. ${scannerResults.length} strategy rows loaded.${errorNote}`;
+    if (els.scannerHint) els.scannerHint.textContent = `Scanner updated ${fmtDateTime(scannerLoadedAt)}. Scope: ${data.scope || scope}. ${scannerResults.length} strategy rows loaded.${errorNote}`;
     render();
     syncAutoTradingTimer();
   } catch (error) {
@@ -1305,9 +1350,13 @@ function openScannerResult(symbol, strategyName) {
 function autoSettingsPayload() {
   return {
     enabled: Boolean(els.autoEnabledInput?.checked),
+    scanScope: els.autoScanScopeSelect?.value || "watchlist",
     positionPct: Number(els.autoPositionPctSelect?.value || 10),
     maxPositions: Number(els.autoMaxPositionsSelect?.value || 3),
-    maxDailyLossPct: Number(els.autoMaxLossSelect?.value || 5)
+    maxDailyLossPct: Number(els.autoMaxLossSelect?.value || 5),
+    maxTotalDrawdownPct: Number(els.autoMaxTotalDrawdownSelect?.value || 20),
+    cooldownHours: Number(els.autoCooldownSelect?.value || 6),
+    allowAddPosition: Boolean(els.autoAllowAddInput?.checked)
   };
 }
 
@@ -1322,6 +1371,7 @@ async function saveAutoTradingSettings() {
     const data = await apiPost("/api/auto-trading/settings", autoSettingsPayload());
     mergeServerState(data.state);
     state.autoTrading = data.autoTrading || state.autoTrading;
+    latestAutoLogs = state.autoTrading.logs || latestAutoLogs;
     els.autoHint.textContent = state.autoTrading.enabled ? "Auto Trading enabled for paper account only." : "Auto Trading disabled.";
     render();
     syncAutoTradingTimer();
@@ -1341,13 +1391,25 @@ async function runAutoTradingNow() {
     const data = await apiPost("/api/auto-trading/run");
     mergeServerState(data.state);
     state.autoTrading = data.autoTrading?.settings || state.autoTrading;
-    latestAutoActions = data.autoTrading?.actions || [];
+    latestAutoLogs = data.autoTrading?.logs || state.autoTrading.logs || [];
     const skippedCount = data.autoTrading?.skipped?.length || 0;
-    els.autoHint.textContent = `Auto run complete: ${latestAutoActions.length} simulated trades, ${skippedCount} skipped.`;
+    const executedCount = (latestAutoLogs || []).filter((item) => item.action === "EXECUTED").length || data.autoTrading?.actions?.length || 0;
+    els.autoHint.textContent = `Auto run complete: ${executedCount} simulated trades, ${skippedCount} skipped.`;
     render();
     syncAutoTradingTimer();
   } catch (error) {
     els.autoHint.textContent = error.message;
+  }
+}
+
+async function refreshAutoTradingState() {
+  if (!currentUser) return;
+  try {
+    const data = await apiGet("/api/state");
+    mergeServerState(data.state);
+    renderAutoTrading();
+  } catch (error) {
+    if (els.autoHint && activePage === "auto") els.autoHint.textContent = error.message;
   }
 }
 
@@ -1357,7 +1419,7 @@ function syncAutoTradingTimer() {
     autoRunTimer = null;
   }
   if (currentUser && state.autoTrading?.enabled && !state.autoTrading?.stopped) {
-    autoRunTimer = window.setInterval(runAutoTradingNow, 60000);
+    autoRunTimer = window.setInterval(refreshAutoTradingState, 60000);
   }
 }
 
@@ -2149,6 +2211,9 @@ els.resetBtn.addEventListener("click", resetAccount);
 els.clearHistoryBtn.addEventListener("click", clearHistory);
 els.exportTradesBtn.addEventListener("click", exportTrades);
 els.scannerRunBtn.addEventListener("click", loadScanner);
+els.scannerScopeSelect.addEventListener("change", () => {
+  scannerLoadedAt = 0;
+});
 els.scannerSignalFilter.addEventListener("change", renderScanner);
 els.scannerMarketFilter.addEventListener("change", renderScanner);
 els.scannerStrategyFilter.addEventListener("change", renderScanner);
