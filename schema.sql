@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS positions (
     qty NUMERIC(20, 8) NOT NULL CHECK (qty >= 0),
     avg_price NUMERIC(20, 8) NOT NULL CHECK (avg_price >= 0),
     currency TEXT NOT NULL DEFAULT 'USD',
+    market TEXT NOT NULL DEFAULT '',
+    strategy_name TEXT,
+    signal_source TEXT,
+    entry_reason TEXT,
+    entry_price NUMERIC(20, 8),
     opened_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -47,6 +52,11 @@ CREATE TABLE IF NOT EXISTS positions (
 );
 
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS market TEXT NOT NULL DEFAULT '';
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS strategy_name TEXT;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS signal_source TEXT;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS entry_reason TEXT;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS entry_price NUMERIC(20, 8);
 
 CREATE TABLE IF NOT EXISTS orders (
     id BIGSERIAL PRIMARY KEY,
@@ -104,6 +114,16 @@ CREATE TABLE IF NOT EXISTS auto_trading_settings (
     cooldown_hours NUMERIC(10, 4) NOT NULL DEFAULT 6,
     allow_add_position BOOLEAN NOT NULL DEFAULT false,
     scan_scope TEXT NOT NULL DEFAULT 'watchlist',
+    quality_mode TEXT NOT NULL DEFAULT 'normal',
+    quality_min_score NUMERIC(10, 4) NOT NULL DEFAULT 0,
+    quality_min_sharpe NUMERIC(10, 4) NOT NULL DEFAULT -0.5,
+    quality_min_return_pct NUMERIC(10, 4) NOT NULL DEFAULT -10,
+    quality_max_drawdown_pct NUMERIC(10, 4) NOT NULL DEFAULT 50,
+    quality_min_trade_count INTEGER NOT NULL DEFAULT 3,
+    signals_generated INTEGER NOT NULL DEFAULT 0,
+    signals_passed_filter INTEGER NOT NULL DEFAULT 0,
+    signals_executed INTEGER NOT NULL DEFAULT 0,
+    signals_rejected INTEGER NOT NULL DEFAULT 0,
     scheduler_status TEXT NOT NULL DEFAULT 'idle',
     last_executed_signal TEXT NOT NULL DEFAULT '',
     enabled_at TIMESTAMPTZ,
@@ -116,6 +136,16 @@ ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS max_total_drawdown_pc
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS cooldown_hours NUMERIC(10, 4) NOT NULL DEFAULT 6;
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS allow_add_position BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS scan_scope TEXT NOT NULL DEFAULT 'watchlist';
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_mode TEXT NOT NULL DEFAULT 'normal';
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_min_score NUMERIC(10, 4) NOT NULL DEFAULT 0;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_min_sharpe NUMERIC(10, 4) NOT NULL DEFAULT -0.5;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_min_return_pct NUMERIC(10, 4) NOT NULL DEFAULT -10;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_max_drawdown_pct NUMERIC(10, 4) NOT NULL DEFAULT 50;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_min_trade_count INTEGER NOT NULL DEFAULT 3;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS signals_generated INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS signals_passed_filter INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS signals_executed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS signals_rejected INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS scheduler_status TEXT NOT NULL DEFAULT 'idle';
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS last_executed_signal TEXT NOT NULL DEFAULT '';
 

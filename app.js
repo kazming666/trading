@@ -1,5 +1,10 @@
 const DEFAULT_SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "600519.SS", "000001.SZ", "0700.HK"];
 const DEFAULT_CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"];
+const AUTO_QUALITY_PRESETS = {
+  strict: { score: 0, sharpe: 0, returnPct: 0, drawdown: 35, trades: 5 },
+  normal: { score: 0, sharpe: -0.5, returnPct: -10, drawdown: 50, trades: 3 },
+  loose: { score: 60, sharpe: -999, returnPct: -999, drawdown: 999, trades: 0 }
+};
 const RANGE_LABELS = {
   "1d": "\u0031\u5929",
   "1wk": "\u0031\u5468",
@@ -131,6 +136,10 @@ const els = {
   autoLastExecutedSignal: document.querySelector("#autoLastExecutedSignal"),
   autoSchedulerStatus: document.querySelector("#autoSchedulerStatus"),
   autoRunningTime: document.querySelector("#autoRunningTime"),
+  autoSignalsGenerated: document.querySelector("#autoSignalsGenerated"),
+  autoSignalsPassed: document.querySelector("#autoSignalsPassed"),
+  autoSignalsExecuted: document.querySelector("#autoSignalsExecuted"),
+  autoSignalsRejected: document.querySelector("#autoSignalsRejected"),
   autoScanScopeSelect: document.querySelector("#autoScanScopeSelect"),
   autoPositionPctSelect: document.querySelector("#autoPositionPctSelect"),
   autoMaxPositionsSelect: document.querySelector("#autoMaxPositionsSelect"),
@@ -138,6 +147,12 @@ const els = {
   autoMaxTotalDrawdownSelect: document.querySelector("#autoMaxTotalDrawdownSelect"),
   autoCooldownSelect: document.querySelector("#autoCooldownSelect"),
   autoAllowAddInput: document.querySelector("#autoAllowAddInput"),
+  autoQualityModeSelect: document.querySelector("#autoQualityModeSelect"),
+  autoQualityMinScoreInput: document.querySelector("#autoQualityMinScoreInput"),
+  autoQualityMinSharpeInput: document.querySelector("#autoQualityMinSharpeInput"),
+  autoQualityMinReturnInput: document.querySelector("#autoQualityMinReturnInput"),
+  autoQualityMaxDrawdownInput: document.querySelector("#autoQualityMaxDrawdownInput"),
+  autoQualityMinTradesInput: document.querySelector("#autoQualityMinTradesInput"),
   autoSaveBtn: document.querySelector("#autoSaveBtn"),
   autoRunBtn: document.querySelector("#autoRunBtn"),
   autoHint: document.querySelector("#autoHint"),
@@ -259,6 +274,16 @@ function emptyState() {
       cooldownHours: 6,
       allowAddPosition: false,
       scanScope: "watchlist",
+      qualityMode: "normal",
+      qualityMinScore: 0,
+      qualityMinSharpe: -0.5,
+      qualityMinReturnPct: -10,
+      qualityMaxDrawdownPct: 50,
+      qualityMinTradeCount: 3,
+      signalsGenerated: 0,
+      signalsPassedFilter: 0,
+      signalsExecuted: 0,
+      signalsRejected: 0,
       schedulerStatus: "idle",
       lastExecutedSignal: "",
       enabledAt: null,
@@ -830,16 +855,23 @@ function renderPositions() {
     const pnlRate = invested ? (pnl / invested) * 100 : 0;
     const openedAt = Number(pos.openedAt);
     const holdingDays = openedAt ? Math.max(1, Math.ceil((Date.now() - openedAt) / 86400000)) : "--";
+    const market = pos.market || (isCryptoSymbol(symbol) ? "Crypto" : symbol.endsWith(".HK") ? "HK" : symbol.endsWith(".SS") || symbol.endsWith(".SZ") ? "A-Share" : "US");
+    const entryPrice = Number(pos.entryPrice || pos.avgPrice);
     return `
       <div class="position-row">
         <div><strong>${symbol}</strong><span>${number.format(pos.qty)} ${text.shares}</span></div>
+        <div><span>Market</span><span>${market}</span></div>
+        <div><span>Strategy</span><span>${strategyLabel(pos.strategyName || "manual")}</span></div>
+        <div><span>Signal Source</span><span>${pos.signalSource || "Manual"}</span></div>
         <div><span>${text.avgPrice}</span><span>${fmtMoney(pos.avgPrice, currency)}</span></div>
+        <div><span>Entry Price</span><span>${fmtMoney(entryPrice, currency)}</span></div>
         <div><span>\u5f53\u524d\u4ef7\u683c</span><span>${fmtMoney(price, currency)}</span></div>
         <div><span>${text.marketValue}</span><span>${fmtMoney(value, currency)}</span></div>
+        <div><span>Position Size</span><span>${fmtMoney(value, currency)}</span></div>
         <div><span>\u6d6e\u52a8\u76c8\u4e8f</span><span class="${pnl >= 0 ? "up" : "down"}">${fmtMoney(pnl, currency)}</span></div>
         <div><span>\u6d6e\u52a8\u6536\u76ca\u7387</span><span class="${pnl >= 0 ? "up" : "down"}">${percentText(pnlRate)}</span></div>
         <div><span>\u6301\u4ed3\u5929\u6570</span><span>${holdingDays}</span></div>
-        <div><span>\u4e70\u5165\u65f6\u95f4</span><span>${fmtDate(openedAt)}</span></div>
+        <div><span>Entry Time</span><span>${fmtDateTime(openedAt)}</span></div>
       </div>
     `;
   }).join("");
@@ -1267,6 +1299,12 @@ function renderAutoTrading() {
   els.autoMaxTotalDrawdownSelect.value = String(Number(auto.maxTotalDrawdownPct || 20));
   els.autoCooldownSelect.value = String(Number(auto.cooldownHours || 6));
   els.autoAllowAddInput.checked = Boolean(auto.allowAddPosition);
+  els.autoQualityModeSelect.value = auto.qualityMode || "normal";
+  els.autoQualityMinScoreInput.value = String(Number(auto.qualityMinScore ?? 0));
+  els.autoQualityMinSharpeInput.value = String(Number(auto.qualityMinSharpe ?? -0.5));
+  els.autoQualityMinReturnInput.value = String(Number(auto.qualityMinReturnPct ?? -10));
+  els.autoQualityMaxDrawdownInput.value = String(Number(auto.qualityMaxDrawdownPct ?? 50));
+  els.autoQualityMinTradesInput.value = String(Number(auto.qualityMinTradeCount ?? 3));
   els.autoRunStatus.textContent = stopped ? "Stopped" : enabled ? "Running" : "Disabled";
   els.autoRunStatus.className = stopped ? "down" : enabled ? "up" : "";
   els.autoEnabledAt.textContent = auto.enabledAt ? fmtDateTime(auto.enabledAt) : "--";
@@ -1281,6 +1319,10 @@ function renderAutoTrading() {
   els.autoSchedulerStatus.textContent = stopped ? "Stopped" : enabled ? (auto.schedulerStatus || "running") : "disabled";
   els.autoSchedulerStatus.className = stopped ? "down" : enabled ? "up" : "";
   els.autoRunningTime.textContent = fmtDuration(auto.runningTimeMs);
+  els.autoSignalsGenerated.textContent = number.format(auto.signalsGenerated || 0);
+  els.autoSignalsPassed.textContent = number.format(auto.signalsPassedFilter || 0);
+  els.autoSignalsExecuted.textContent = number.format(auto.signalsExecuted || 0);
+  els.autoSignalsRejected.textContent = number.format(auto.signalsRejected || 0);
   if (auto.stopReason) {
     els.autoHint.textContent = auto.stopReason;
     els.autoHint.className = "trade-hint warning";
@@ -1356,8 +1398,25 @@ function autoSettingsPayload() {
     maxDailyLossPct: Number(els.autoMaxLossSelect?.value || 5),
     maxTotalDrawdownPct: Number(els.autoMaxTotalDrawdownSelect?.value || 20),
     cooldownHours: Number(els.autoCooldownSelect?.value || 6),
-    allowAddPosition: Boolean(els.autoAllowAddInput?.checked)
+    allowAddPosition: Boolean(els.autoAllowAddInput?.checked),
+    qualityMode: els.autoQualityModeSelect?.value || "normal",
+    qualityMinScore: Number(els.autoQualityMinScoreInput?.value || 0),
+    qualityMinSharpe: Number(els.autoQualityMinSharpeInput?.value || -0.5),
+    qualityMinReturnPct: Number(els.autoQualityMinReturnInput?.value || -10),
+    qualityMaxDrawdownPct: Number(els.autoQualityMaxDrawdownInput?.value || 50),
+    qualityMinTradeCount: Number(els.autoQualityMinTradesInput?.value || 3)
   };
+}
+
+function applyAutoQualityPreset() {
+  const mode = els.autoQualityModeSelect?.value || "normal";
+  const preset = AUTO_QUALITY_PRESETS[mode];
+  if (!preset) return;
+  els.autoQualityMinScoreInput.value = String(preset.score);
+  els.autoQualityMinSharpeInput.value = String(preset.sharpe);
+  els.autoQualityMinReturnInput.value = String(preset.returnPct);
+  els.autoQualityMaxDrawdownInput.value = String(preset.drawdown);
+  els.autoQualityMinTradesInput.value = String(preset.trades);
 }
 
 async function saveAutoTradingSettings() {
@@ -2230,6 +2289,7 @@ els.scannerTop.addEventListener("click", (event) => {
 els.autoSaveBtn.addEventListener("click", saveAutoTradingSettings);
 els.autoRunBtn.addEventListener("click", runAutoTradingNow);
 els.autoEnabledInput.addEventListener("change", saveAutoTradingSettings);
+els.autoQualityModeSelect.addEventListener("change", applyAutoQualityPreset);
 els.runStrategyBtn.addEventListener("click", runStrategySignal);
 els.backtestStrategyBtn.addEventListener("click", runStrategyBacktest);
 els.optimizeStrategyBtn.addEventListener("click", optimizeStrategyParams);

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>&#27169;&#25311;&#32929;&#31080;&#20132;&#26131;&#21488;</title>
-    <link rel="stylesheet" href="styles.css?v=20260605a">
+    <link rel="stylesheet" href="styles.css?v=20260605b">
   </head>
   <body>
     <main class="app-shell">
@@ -430,6 +430,22 @@
               <span>Running Time</span>
               <strong id="autoRunningTime">--</strong>
             </div>
+            <div class="metric">
+              <span>Signals Generated</span>
+              <strong id="autoSignalsGenerated">0</strong>
+            </div>
+            <div class="metric">
+              <span>Signals Passed Filter</span>
+              <strong id="autoSignalsPassed">0</strong>
+            </div>
+            <div class="metric">
+              <span>Signals Executed</span>
+              <strong id="autoSignalsExecuted">0</strong>
+            </div>
+            <div class="metric">
+              <span>Signals Rejected</span>
+              <strong id="autoSignalsRejected">0</strong>
+            </div>
           </section>
 
           <div class="auto-settings-grid">
@@ -492,6 +508,35 @@
             <label class="checkbox-line">
               <input id="autoAllowAddInput" type="checkbox">
               <span>Allow adding to existing positions</span>
+            </label>
+            <label>
+              Quality Mode
+              <select id="autoQualityModeSelect">
+                <option value="strict">Strict</option>
+                <option value="normal" selected>Normal</option>
+                <option value="loose">Loose</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <label>
+              Minimum Score
+              <input id="autoQualityMinScoreInput" type="number" min="0" max="100" step="1" value="0">
+            </label>
+            <label>
+              Minimum Sharpe
+              <input id="autoQualityMinSharpeInput" type="number" min="-10" max="10" step="0.1" value="-0.5">
+            </label>
+            <label>
+              Minimum Return %
+              <input id="autoQualityMinReturnInput" type="number" min="-100" max="500" step="1" value="-10">
+            </label>
+            <label>
+              Maximum Drawdown %
+              <input id="autoQualityMaxDrawdownInput" type="number" min="0" max="100" step="1" value="50">
+            </label>
+            <label>
+              Minimum Trade Count
+              <input id="autoQualityMinTradesInput" type="number" min="0" max="500" step="1" value="3">
             </label>
             <div class="auto-actions">
               <button id="autoSaveBtn" class="primary-action" type="button">&#20445;&#23384;&#35774;&#32622;</button>
@@ -885,6 +930,6 @@ ETHUSDT</textarea>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260605a"></script>
+    <script src="app.js?v=20260605b"></script>
   </body>
 </html>

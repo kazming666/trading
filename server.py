@@ -72,6 +72,11 @@ SCANNER_UNIVERSES = {
     "hk": ["0700.HK", "9988.HK", "3690.HK", "1299.HK", "1810.HK", "9618.HK"],
     "crypto": CRYPTO_SYMBOLS,
 }
+QUALITY_FILTER_PRESETS = {
+    "strict": {"min_score": 0, "min_sharpe": 0, "min_return": 0, "max_drawdown": 35, "min_trades": 5},
+    "normal": {"min_score": 0, "min_sharpe": -0.5, "min_return": -10, "max_drawdown": 50, "min_trades": 3},
+    "loose": {"min_score": 60, "min_sharpe": -999, "min_return": -999, "max_drawdown": 999, "min_trades": 0},
+}
 
 
 def fetch_json(url):
@@ -755,6 +760,46 @@ def scanner_final_score(strength, sharpe, return_pct, max_drawdown):
     )
 
 
+def quality_filter_config(settings):
+    mode = (settings.get("quality_mode") or "normal").lower()
+    if mode == "custom":
+        return {
+            "mode": "custom",
+            "min_score": float(settings.get("quality_min_score") or 0),
+            "min_sharpe": float(settings.get("quality_min_sharpe") or -0.5),
+            "min_return": float(settings.get("quality_min_return_pct") or -10),
+            "max_drawdown": float(settings.get("quality_max_drawdown_pct") or 50),
+            "min_trades": int(settings.get("quality_min_trade_count") or 3),
+        }
+    preset = QUALITY_FILTER_PRESETS.get(mode, QUALITY_FILTER_PRESETS["normal"])
+    return {"mode": mode if mode in QUALITY_FILTER_PRESETS else "normal", **preset}
+
+
+def passes_auto_quality_filter(item, config):
+    signal = item.get("signal")
+    if signal not in {"BUY", "SELL"}:
+        return False, "Signal is HOLD or unsupported."
+    score = float(item.get("finalScore") or item.get("strength") or 0)
+    sharpe = float(item.get("sharpeRatio") or 0)
+    return_pct = float(item.get("returnPct") or 0)
+    drawdown = float(item.get("maxDrawdown") or 0)
+    trades = int(item.get("tradeCount") or 0)
+    failures = []
+    if score <= float(config["min_score"]):
+        failures.append(f"Score <= {config['min_score']:g}")
+    if sharpe <= float(config["min_sharpe"]):
+        failures.append(f"Sharpe <= {config['min_sharpe']:g}")
+    if return_pct <= float(config["min_return"]):
+        failures.append(f"Return <= {config['min_return']:g}%")
+    if drawdown >= float(config["max_drawdown"]):
+        failures.append(f"Drawdown >= {config['max_drawdown']:g}%")
+    if trades < int(config["min_trades"]):
+        failures.append(f"Trades < {config['min_trades']}")
+    if failures:
+        return False, f"Failed {config['mode']} quality filter: " + ", ".join(failures)
+    return True, f"Passed {config['mode']} quality filter."
+
+
 def scan_watchlist_symbol(symbol):
     normalized = normalize_market_symbol(symbol)
     quote_data = normalize_quote(normalized)
@@ -1165,7 +1210,7 @@ def record_all_equity_snapshots():
         print(f"Warning: equity snapshot worker failed: {error}")
 
 
-def execute_paper_trade(conn, user_id, symbol, side, qty, quote_data=None, execution_source="manual", strategy_name=None):
+def execute_paper_trade(conn, user_id, symbol, side, qty, quote_data=None, execution_source="manual", strategy_name=None, signal_source=None, entry_reason=None):
     symbol = normalize_market_symbol(symbol)
     qty = Decimal(str(qty))
     if side not in {"buy", "sell"} or not symbol or qty <= 0:
@@ -1193,14 +1238,28 @@ def execute_paper_trade(conn, user_id, symbol, side, qty, quote_data=None, execu
             cur.execute("UPDATE accounts SET cash_balance = cash_balance - %s, updated_at = now() WHERE user_id = %s", (value, user_id))
             account_balance_after = account["cash_balance"] - value
             position_qty_after = new_qty
+            market_key, market_label = market_kind(symbol)
+            position_entry_price = price if current_qty <= 0 else avg_price
+            position_opened_at_sql = "now()" if current_qty <= 0 else "positions.opened_at"
             cur.execute(
                 """
-                INSERT INTO positions (user_id, symbol, qty, avg_price, currency)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO positions
+                    (user_id, symbol, qty, avg_price, currency, market, strategy_name, signal_source, entry_reason, entry_price)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id, symbol)
-                DO UPDATE SET qty = EXCLUDED.qty, avg_price = EXCLUDED.avg_price, currency = EXCLUDED.currency, updated_at = now()
+                DO UPDATE SET
+                    qty = EXCLUDED.qty,
+                    avg_price = EXCLUDED.avg_price,
+                    currency = EXCLUDED.currency,
+                    market = CASE WHEN positions.market = '' THEN EXCLUDED.market ELSE positions.market END,
+                    strategy_name = COALESCE(positions.strategy_name, EXCLUDED.strategy_name),
+                    signal_source = COALESCE(positions.signal_source, EXCLUDED.signal_source),
+                    entry_reason = COALESCE(positions.entry_reason, EXCLUDED.entry_reason),
+                    entry_price = COALESCE(positions.entry_price, EXCLUDED.entry_price),
+                    opened_at = """ + position_opened_at_sql + """,
+                    updated_at = now()
                 """,
-                (user_id, symbol, new_qty, new_avg, currency),
+                (user_id, symbol, new_qty, new_avg, currency, market_label, strategy_name, signal_source, entry_reason, position_entry_price),
             )
         else:
             if current_qty < qty:
@@ -1268,6 +1327,28 @@ def execute_paper_trade(conn, user_id, symbol, side, qty, quote_data=None, execu
 
 
 def clean_auto_settings_payload(data):
+    def numeric_value(name, default, minimum=None, maximum=None):
+        try:
+            value = float(data.get(name, default))
+        except (TypeError, ValueError):
+            value = default
+        if minimum is not None:
+            value = max(minimum, value)
+        if maximum is not None:
+            value = min(maximum, value)
+        return value
+
+    def int_value(name, default, minimum=None, maximum=None):
+        try:
+            value = int(data.get(name, default))
+        except (TypeError, ValueError):
+            value = default
+        if minimum is not None:
+            value = max(minimum, value)
+        if maximum is not None:
+            value = min(maximum, value)
+        return value
+
     def allowed_number(name, default, allowed):
         try:
             value = float(data.get(name, default))
@@ -1285,6 +1366,9 @@ def clean_auto_settings_payload(data):
     scope = (data.get("scanScope") or "watchlist").strip().lower()
     if scope not in {"watchlist", "us", "a", "hk", "crypto", "mixed"}:
         scope = "watchlist"
+    quality_mode = (data.get("qualityMode") or "normal").strip().lower()
+    if quality_mode not in {"strict", "normal", "loose", "custom"}:
+        quality_mode = "normal"
     return {
         "enabled": bool(data.get("enabled")),
         "positionPct": allowed_number("positionPct", 10, {5, 10, 20, 50}),
@@ -1294,6 +1378,12 @@ def clean_auto_settings_payload(data):
         "cooldownHours": allowed_number("cooldownHours", 6, {1, 3, 6, 12, 24}),
         "allowAddPosition": bool(data.get("allowAddPosition")),
         "scanScope": scope,
+        "qualityMode": quality_mode,
+        "qualityMinScore": numeric_value("qualityMinScore", QUALITY_FILTER_PRESETS["normal"]["min_score"], 0, 100),
+        "qualityMinSharpe": numeric_value("qualityMinSharpe", QUALITY_FILTER_PRESETS["normal"]["min_sharpe"], -10, 10),
+        "qualityMinReturnPct": numeric_value("qualityMinReturnPct", QUALITY_FILTER_PRESETS["normal"]["min_return"], -100, 500),
+        "qualityMaxDrawdownPct": numeric_value("qualityMaxDrawdownPct", QUALITY_FILTER_PRESETS["normal"]["max_drawdown"], 0, 100),
+        "qualityMinTradeCount": int_value("qualityMinTradeCount", QUALITY_FILTER_PRESETS["normal"]["min_trades"], 0, 500),
     }
 
 
@@ -1311,6 +1401,9 @@ def auto_trading_stats(conn, user_id):
             """
             SELECT enabled, stopped, stop_reason, position_pct, max_positions, max_daily_loss_pct,
                    max_total_drawdown_pct, cooldown_hours, allow_add_position, scan_scope,
+                   quality_mode, quality_min_score, quality_min_sharpe, quality_min_return_pct,
+                   quality_max_drawdown_pct, quality_min_trade_count,
+                   signals_generated, signals_passed_filter, signals_executed, signals_rejected,
                    scheduler_status, last_executed_signal, enabled_at, last_run_at, updated_at
             FROM auto_trading_settings
             WHERE user_id = %s
@@ -1378,6 +1471,16 @@ def auto_trading_stats(conn, user_id):
         "cooldownHours": settings["cooldown_hours"],
         "allowAddPosition": settings["allow_add_position"],
         "scanScope": settings["scan_scope"],
+        "qualityMode": settings["quality_mode"],
+        "qualityMinScore": settings["quality_min_score"],
+        "qualityMinSharpe": settings["quality_min_sharpe"],
+        "qualityMinReturnPct": settings["quality_min_return_pct"],
+        "qualityMaxDrawdownPct": settings["quality_max_drawdown_pct"],
+        "qualityMinTradeCount": settings["quality_min_trade_count"],
+        "signalsGenerated": settings["signals_generated"],
+        "signalsPassedFilter": settings["signals_passed_filter"],
+        "signalsExecuted": settings["signals_executed"],
+        "signalsRejected": settings["signals_rejected"],
         "schedulerStatus": settings["scheduler_status"],
         "lastExecutedSignal": settings["last_executed_signal"],
         "enabledAt": int(settings["enabled_at"].timestamp() * 1000) if settings["enabled_at"] else None,
@@ -1576,6 +1679,11 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
         else:
             scope = scan_scope or settings["scan_scope"]
 
+        quality_config = quality_filter_config(settings)
+        signals_generated = len(scanner_results)
+        signals_passed = 0
+        signals_executed = 0
+        signals_rejected = 0
         ranked_results = sorted(scanner_results, key=lambda item: (item.get("finalScore") or 0, item.get("returnPct") or 0), reverse=True)
         with conn.cursor() as cur:
             cur.execute("SELECT symbol, qty FROM positions WHERE user_id = %s AND qty > 0", (user_id,))
@@ -1587,19 +1695,14 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
             symbol = normalize_market_symbol(item["symbol"])
             signal = item["signal"]
             strategy_name = item.get("strategy") or item.get("strategyLabel") or "scanner"
-            if signal == "HOLD":
-                skipped.append({"symbol": symbol, "signal": signal, "reason": "HOLD signal."})
-                logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", "HOLD signal."))
-                continue
-            if signal not in {"BUY", "SELL"}:
-                skipped.append({"symbol": symbol, "signal": signal, "reason": "Unsupported signal."})
-                logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", "Unsupported signal."))
-                continue
-            if not item.get("passesFilter", True):
-                reason = "Failed quality filter: Sharpe <= 0, Return <= 0, Drawdown >= 35%, or Trades < 5."
+            passed_quality, quality_reason = passes_auto_quality_filter(item, quality_config)
+            if not passed_quality:
+                reason = quality_reason
+                signals_rejected += 1
                 skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
                 logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason))
                 continue
+            signals_passed += 1
             try:
                 quote_data = normalize_quote(symbol)
                 price = Decimal(str(quote_data["price"]))
@@ -1629,10 +1732,11 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
                         logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason, price=price))
                         continue
                     qty = target_value / price
-                    fill = execute_paper_trade(conn, user_id, symbol, "buy", qty, quote_data, "auto", strategy_name)
+                    fill = execute_paper_trade(conn, user_id, symbol, "buy", qty, quote_data, "auto", strategy_name, signal, item.get("reason") or quality_reason)
                     positions[symbol] = positions.get(symbol, Decimal("0")) + fill["qty"]
                     cash_balance -= fill["value"]
                     actions.append({"symbol": symbol, "side": "buy", "strategy": strategy_name, "qty": fill["qty"], "price": fill["price"], "value": fill["value"]})
+                    signals_executed += 1
                     reason = "Position Added" if already_holding else "Position Opened"
                     logs.append(record_auto_log(conn, user_id, scan_id, item, "EXECUTED", reason, price=fill["price"], qty=fill["qty"]))
                 elif signal == "SELL":
@@ -1646,13 +1750,16 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
                     positions.pop(symbol, None)
                     cash_balance += fill["value"]
                     actions.append({"symbol": symbol, "side": "sell", "strategy": strategy_name, "qty": fill["qty"], "price": fill["price"], "value": fill["value"], "realizedPnl": fill["realizedPnl"]})
+                    signals_executed += 1
                     logs.append(record_auto_log(conn, user_id, scan_id, item, "EXECUTED", "Position Closed", price=fill["price"], qty=fill["qty"]))
             except Exception as error:
                 reason = str(error)
+                signals_rejected += 1
                 skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
                 logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason))
 
         with conn.cursor() as cur:
+            signals_rejected = max(0, signals_generated - signals_passed)
             last_signal = ""
             if actions:
                 latest = actions[-1]
@@ -1663,10 +1770,14 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
                 SET last_run_at = now(),
                     scheduler_status = %s,
                     last_executed_signal = CASE WHEN %s <> '' THEN %s ELSE last_executed_signal END,
+                    signals_generated = %s,
+                    signals_passed_filter = %s,
+                    signals_executed = %s,
+                    signals_rejected = %s,
                     updated_at = now()
                 WHERE user_id = %s
                 """,
-                ("running", last_signal, last_signal, user_id),
+                ("running", last_signal, last_signal, signals_generated, signals_passed, signals_executed, signals_rejected, user_id),
             )
         conn.commit()
         return {"actions": actions, "skipped": skipped, "logs": logs, "scope": scope, "stateChanged": bool(actions), "settings": auto_trading_stats(conn, user_id)}
@@ -2017,7 +2128,16 @@ class Handler(SimpleHTTPRequestHandler):
                 account = cur.fetchone()
                 cur.execute("SELECT symbol FROM watchlist WHERE user_id = %s ORDER BY sort_order, symbol", (user_id,))
                 symbols = [row["symbol"] for row in cur.fetchall()]
-                cur.execute("SELECT symbol, qty, avg_price, currency, opened_at FROM positions WHERE user_id = %s AND qty > 0 ORDER BY symbol", (user_id,))
+                cur.execute(
+                    """
+                    SELECT symbol, qty, avg_price, currency, market, strategy_name, signal_source,
+                           entry_reason, entry_price, opened_at
+                    FROM positions
+                    WHERE user_id = %s AND qty > 0
+                    ORDER BY symbol
+                    """,
+                    (user_id,),
+                )
                 positions = cur.fetchall()
                 cur.execute(
                     """
@@ -2181,6 +2301,11 @@ class Handler(SimpleHTTPRequestHandler):
                     "qty": row["qty"],
                     "avgPrice": row["avg_price"],
                     "currency": row["currency"],
+                    "market": row["market"],
+                    "strategyName": row["strategy_name"],
+                    "signalSource": row["signal_source"],
+                    "entryReason": row["entry_reason"],
+                    "entryPrice": row["entry_price"],
                     "openedAt": int(row["opened_at"].timestamp() * 1000) if row["opened_at"] else None,
                 }
                 for row in positions
@@ -2505,8 +2630,11 @@ class Handler(SimpleHTTPRequestHandler):
                     INSERT INTO auto_trading_settings
                         (user_id, enabled, stopped, stop_reason, position_pct, max_positions, max_daily_loss_pct,
                          max_total_drawdown_pct, cooldown_hours, allow_add_position, scan_scope, scheduler_status,
+                         quality_mode, quality_min_score, quality_min_sharpe, quality_min_return_pct,
+                         quality_max_drawdown_pct, quality_min_trade_count,
                          enabled_at, updated_at)
                     VALUES (%s, %s, false, '', %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s,
                             CASE WHEN %s THEN now() ELSE NULL END, now())
                     ON CONFLICT (user_id)
                     DO UPDATE SET
@@ -2521,6 +2649,12 @@ class Handler(SimpleHTTPRequestHandler):
                         allow_add_position = EXCLUDED.allow_add_position,
                         scan_scope = EXCLUDED.scan_scope,
                         scheduler_status = EXCLUDED.scheduler_status,
+                        quality_mode = EXCLUDED.quality_mode,
+                        quality_min_score = EXCLUDED.quality_min_score,
+                        quality_min_sharpe = EXCLUDED.quality_min_sharpe,
+                        quality_min_return_pct = EXCLUDED.quality_min_return_pct,
+                        quality_max_drawdown_pct = EXCLUDED.quality_max_drawdown_pct,
+                        quality_min_trade_count = EXCLUDED.quality_min_trade_count,
                         enabled_at = CASE
                             WHEN EXCLUDED.enabled AND NOT auto_trading_settings.enabled THEN now()
                             WHEN EXCLUDED.enabled THEN auto_trading_settings.enabled_at
@@ -2539,6 +2673,12 @@ class Handler(SimpleHTTPRequestHandler):
                         settings["allowAddPosition"],
                         settings["scanScope"],
                         "running" if settings["enabled"] else "disabled",
+                        settings["qualityMode"],
+                        Decimal(str(settings["qualityMinScore"])),
+                        Decimal(str(settings["qualityMinSharpe"])),
+                        Decimal(str(settings["qualityMinReturnPct"])),
+                        Decimal(str(settings["qualityMaxDrawdownPct"])),
+                        settings["qualityMinTradeCount"],
                         settings["enabled"],
                     ),
                 )
