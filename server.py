@@ -2067,6 +2067,13 @@ class Handler(SimpleHTTPRequestHandler):
             return f"{content_type}; charset=utf-8"
         return content_type
 
+    def end_headers(self):
+        if not self.path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        super().end_headers()
+
     def end_json(self, status, payload, headers=None):
         body = json.dumps(payload, ensure_ascii=False, default=decimal_to_json).encode("utf-8")
         self.send_response(status)
