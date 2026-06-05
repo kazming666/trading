@@ -924,12 +924,54 @@ ETHUSDT</textarea>
               <p id="settingsHint" class="trade-hint"></p>
             </div>
           </div>
+
+          <div class="history-panel">
+            <div class="panel-head">
+              <h2>Scanner Strategy Parameters</h2>
+              <p class="mini-note">Scanner and Auto Trading use these saved parameters.</p>
+            </div>
+            <div class="config-row strategy-settings-row">
+              <label>
+                MA Fast
+                <input id="settingsMaFastInput" type="number" min="1" step="1" value="5">
+              </label>
+              <label>
+                MA Slow
+                <input id="settingsMaSlowInput" type="number" min="2" step="1" value="20">
+              </label>
+              <label>
+                MACD Fast
+                <input id="settingsMacdFastInput" type="number" min="1" step="1" value="12">
+              </label>
+              <label>
+                MACD Slow
+                <input id="settingsMacdSlowInput" type="number" min="2" step="1" value="26">
+              </label>
+              <label>
+                MACD Signal
+                <input id="settingsMacdSignalInput" type="number" min="1" step="1" value="9">
+              </label>
+              <label>
+                RSI Period
+                <input id="settingsRsiPeriodInput" type="number" min="2" step="1" value="14">
+              </label>
+              <label>
+                RSI Buy Threshold
+                <input id="settingsRsiBuyInput" type="number" min="1" max="99" step="1" value="30">
+              </label>
+              <label>
+                RSI Sell Threshold
+                <input id="settingsRsiSellInput" type="number" min="1" max="99" step="1" value="70">
+              </label>
+              <button id="saveStrategySettingsBtn" class="primary-action" type="button">Save Strategy Parameters</button>
+            </div>
+          </div>
         </section>
       </section>
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260606a"></script>
+    <script src="app.js?v=20260606b"></script>
   </body>
 </html>

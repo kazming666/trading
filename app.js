@@ -45,6 +45,7 @@ const els = {
   depositInput: document.querySelector("#depositInput"),
   depositBtn: document.querySelector("#depositBtn"),
   saveSettingsBtn: document.querySelector("#saveSettingsBtn"),
+  saveStrategySettingsBtn: document.querySelector("#saveStrategySettingsBtn"),
   buyTab: document.querySelector("#buyTab"),
   sellTab: document.querySelector("#sellTab"),
   quantityInput: document.querySelector("#quantityInput"),
@@ -171,6 +172,14 @@ const els = {
   currentPasswordInput: document.querySelector("#currentPasswordInput"),
   newPasswordInput: document.querySelector("#newPasswordInput"),
   changePasswordBtn: document.querySelector("#changePasswordBtn"),
+  settingsMaFastInput: document.querySelector("#settingsMaFastInput"),
+  settingsMaSlowInput: document.querySelector("#settingsMaSlowInput"),
+  settingsMacdFastInput: document.querySelector("#settingsMacdFastInput"),
+  settingsMacdSlowInput: document.querySelector("#settingsMacdSlowInput"),
+  settingsMacdSignalInput: document.querySelector("#settingsMacdSignalInput"),
+  settingsRsiPeriodInput: document.querySelector("#settingsRsiPeriodInput"),
+  settingsRsiBuyInput: document.querySelector("#settingsRsiBuyInput"),
+  settingsRsiSellInput: document.querySelector("#settingsRsiSellInput"),
   statTotalTrades: document.querySelector("#statTotalTrades"),
   statWinRate: document.querySelector("#statWinRate"),
   statMaxProfit: document.querySelector("#statMaxProfit"),
@@ -263,6 +272,16 @@ function emptyState() {
     dailySnapshots: [],
     signalHistory: [],
     backtestHistory: [],
+    strategySettings: {
+      maFast: 5,
+      maSlow: 20,
+      macdFast: 12,
+      macdSlow: 26,
+      macdSignal: 9,
+      rsiPeriod: 14,
+      rsiBuyThreshold: 30,
+      rsiSellThreshold: 70
+    },
     autoTrading: {
       enabled: false,
       stopped: false,
@@ -634,6 +653,15 @@ function renderClock() {
 
 function renderSettings() {
   els.startingCashInput.value = state.startingCash;
+  const settings = state.strategySettings || {};
+  els.settingsMaFastInput.value = Number(settings.maFast || 5);
+  els.settingsMaSlowInput.value = Number(settings.maSlow || 20);
+  els.settingsMacdFastInput.value = Number(settings.macdFast || 12);
+  els.settingsMacdSlowInput.value = Number(settings.macdSlow || 26);
+  els.settingsMacdSignalInput.value = Number(settings.macdSignal || 9);
+  els.settingsRsiPeriodInput.value = Number(settings.rsiPeriod || 14);
+  els.settingsRsiBuyInput.value = Number(settings.rsiBuyThreshold || 30);
+  els.settingsRsiSellInput.value = Number(settings.rsiSellThreshold || 70);
 }
 
 function renderWatchlist() {
@@ -1096,6 +1124,35 @@ async function saveSettings() {
     setHint(text.initialSaved);
     render();
     await refreshQuotes();
+  } catch (error) {
+    setHint(error.message);
+  }
+}
+
+function strategySettingsPayload() {
+  return {
+    maFast: Number(els.settingsMaFastInput?.value || 5),
+    maSlow: Number(els.settingsMaSlowInput?.value || 20),
+    macdFast: Number(els.settingsMacdFastInput?.value || 12),
+    macdSlow: Number(els.settingsMacdSlowInput?.value || 26),
+    macdSignal: Number(els.settingsMacdSignalInput?.value || 9),
+    rsiPeriod: Number(els.settingsRsiPeriodInput?.value || 14),
+    rsiBuyThreshold: Number(els.settingsRsiBuyInput?.value || 30),
+    rsiSellThreshold: Number(els.settingsRsiSellInput?.value || 70)
+  };
+}
+
+async function saveStrategySettings() {
+  if (!currentUser) {
+    setHint(text.loginRequired);
+    return;
+  }
+  try {
+    const data = await apiPost("/api/strategy/settings", strategySettingsPayload());
+    mergeServerState(data.state);
+    scannerLoadedAt = 0;
+    setHint("Strategy parameters saved. Scanner and Auto Trading will use the new values.");
+    render();
   } catch (error) {
     setHint(error.message);
   }
@@ -2262,6 +2319,7 @@ els.buyTab.addEventListener("click", () => setSide("buy"));
 els.sellTab.addEventListener("click", () => setSide("sell"));
 els.tradeBtn.addEventListener("click", placeTrade);
 els.saveSettingsBtn.addEventListener("click", saveSettings);
+els.saveStrategySettingsBtn.addEventListener("click", saveStrategySettings);
 els.depositBtn.addEventListener("click", depositCash);
 els.depositInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") depositCash();

@@ -364,6 +364,103 @@ def clean_strategy_params(strategy_name, params):
     return cleaned
 
 
+def clean_user_strategy_settings(data):
+    data = data or {}
+
+    def as_int(name, default, minimum=1, maximum=400):
+        try:
+            value = int(data.get(name, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    def as_float(name, default, minimum=0, maximum=100):
+        try:
+            value = float(data.get(name, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    settings = {
+        "maFast": as_int("maFast", 5),
+        "maSlow": as_int("maSlow", 20),
+        "macdFast": as_int("macdFast", 12),
+        "macdSlow": as_int("macdSlow", 26),
+        "macdSignal": as_int("macdSignal", 9),
+        "rsiPeriod": as_int("rsiPeriod", 14, 2, 400),
+        "rsiBuyThreshold": as_float("rsiBuyThreshold", 30),
+        "rsiSellThreshold": as_float("rsiSellThreshold", 70),
+    }
+    if settings["maFast"] >= settings["maSlow"]:
+        settings["maSlow"] = settings["maFast"] + 1
+    if settings["macdFast"] >= settings["macdSlow"]:
+        settings["macdSlow"] = settings["macdFast"] + 1
+    if settings["rsiBuyThreshold"] >= settings["rsiSellThreshold"]:
+        settings["rsiSellThreshold"] = min(100, settings["rsiBuyThreshold"] + 1)
+    return settings
+
+
+def ensure_strategy_settings(conn, user_id):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO strategy_settings (user_id)
+            VALUES (%s)
+            ON CONFLICT (user_id) DO NOTHING
+            """,
+            (user_id,),
+        )
+
+
+def strategy_settings_payload(row):
+    return {
+        "maFast": row["ma_fast"],
+        "maSlow": row["ma_slow"],
+        "macdFast": row["macd_fast"],
+        "macdSlow": row["macd_slow"],
+        "macdSignal": row["macd_signal"],
+        "rsiPeriod": row["rsi_period"],
+        "rsiBuyThreshold": row["rsi_buy_threshold"],
+        "rsiSellThreshold": row["rsi_sell_threshold"],
+    }
+
+
+def load_strategy_settings(conn, user_id):
+    ensure_strategy_settings(conn, user_id)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT ma_fast, ma_slow, macd_fast, macd_slow, macd_signal,
+                   rsi_period, rsi_buy_threshold, rsi_sell_threshold
+            FROM strategy_settings
+            WHERE user_id = %s
+            """,
+            (user_id,),
+        )
+        return strategy_settings_payload(cur.fetchone())
+
+
+def params_for_strategy(strategy_name, user_settings=None):
+    settings = clean_user_strategy_settings(user_settings or {})
+    if strategy_name == "moving_average":
+        return clean_strategy_params("moving_average", {"fastMa": settings["maFast"], "slowMa": settings["maSlow"]})
+    if strategy_name == "rsi":
+        return clean_strategy_params(
+            "rsi",
+            {
+                "period": settings["rsiPeriod"],
+                "oversold": settings["rsiBuyThreshold"],
+                "overbought": settings["rsiSellThreshold"],
+            },
+        )
+    if strategy_name == "macd":
+        return clean_strategy_params(
+            "macd",
+            {"fast": settings["macdFast"], "slow": settings["macdSlow"], "signal": settings["macdSignal"]},
+        )
+    return clean_strategy_params(strategy_name, {})
+
+
 def calculate_max_drawdown(equity_values):
     peak = None
     max_drawdown = 0
@@ -632,13 +729,7 @@ def market_kind(symbol):
 
 
 def default_strategy_params(strategy_name):
-    if strategy_name == "moving_average":
-        return {"fastMa": 5, "slowMa": 20, "frequencyBars": 1}
-    if strategy_name == "rsi":
-        return {"period": 14, "oversold": 30, "overbought": 70, "frequencyBars": 1}
-    if strategy_name == "macd":
-        return {"fast": 12, "slow": 26, "signal": 9, "frequencyBars": 1}
-    return {"frequencyBars": 1}
+    return params_for_strategy(strategy_name)
 
 
 def simple_ema(values, period):
@@ -800,7 +891,7 @@ def passes_auto_quality_filter(item, config):
     return True, f"Passed {config['mode']} quality filter."
 
 
-def scan_watchlist_symbol(symbol):
+def scan_watchlist_symbol(symbol, user_strategy_settings=None):
     normalized = normalize_market_symbol(symbol)
     quote_data = normalize_quote(normalized)
     points = normalize_backtest_history(normalized, "1y")[-260:]
@@ -809,7 +900,7 @@ def scan_watchlist_symbol(symbol):
     market_key, market_label = market_kind(normalized)
     rows = []
     for strategy_name in ("moving_average", "rsi", "macd"):
-        params = default_strategy_params(strategy_name)
+        params = params_for_strategy(strategy_name, user_strategy_settings)
         market_data = {
             "symbol": normalized,
             "price": quote_data["price"],
@@ -887,13 +978,13 @@ def scanner_symbols_for_scope(conn, user_id, scope="watchlist", include_crypto=F
     return requested, normalized
 
 
-def scan_symbols(symbols):
+def scan_symbols(symbols, user_strategy_settings=None):
     if not symbols:
         return [], []
     results = []
     errors = []
     with ThreadPoolExecutor(max_workers=min(6, len(symbols))) as executor:
-        futures = {executor.submit(scan_watchlist_symbol, symbol): symbol for symbol in symbols}
+        futures = {executor.submit(scan_watchlist_symbol, symbol, user_strategy_settings): symbol for symbol in symbols}
         for future in as_completed(futures):
             symbol = futures[future]
             try:
@@ -1674,8 +1765,9 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
             return {"actions": actions, "skipped": skipped, "logs": logs, "stateChanged": True, "settings": auto_trading_stats(conn, user_id)}
 
         if scanner_results is None:
+            user_strategy_settings = load_strategy_settings(conn, user_id)
             scope, symbols = scanner_symbols_for_scope(conn, user_id, scan_scope or settings["scan_scope"], include_crypto=True)
-            scanner_results, scan_errors = scan_symbols(symbols)
+            scanner_results, scan_errors = scan_symbols(symbols, user_strategy_settings)
             for error in scan_errors:
                 skipped.append({"symbol": error["symbol"], "reason": error["error"]})
                 logs.append(record_auto_log(conn, user_id, scan_id, {"symbol": error["symbol"], "signal": "ERROR", "strategy": "scanner"}, "SKIPPED", error["error"]))
@@ -1875,6 +1967,7 @@ class Handler(SimpleHTTPRequestHandler):
         "/api/account/reset": "handle_reset_account",
         "/api/account/active-symbol": "handle_active_symbol",
         "/api/auto-trading/settings": "handle_auto_trading_settings",
+        "/api/strategy/settings": "handle_strategy_settings",
         "/api/auto-trading/run": "handle_auto_trading_run",
         "/api/watchlist": "handle_add_watchlist",
         "/api/trade": "handle_trade",
@@ -2129,6 +2222,7 @@ class Handler(SimpleHTTPRequestHandler):
             with conn.cursor() as cur:
                 cur.execute("SELECT cash_balance, starting_cash, base_currency, active_symbol FROM accounts WHERE user_id = %s", (user_id,))
                 account = cur.fetchone()
+                strategy_settings = load_strategy_settings(conn, user_id)
                 cur.execute("SELECT symbol FROM watchlist WHERE user_id = %s ORDER BY sort_order, symbol", (user_id,))
                 symbols = [row["symbol"] for row in cur.fetchall()]
                 cur.execute(
@@ -2298,6 +2392,7 @@ class Handler(SimpleHTTPRequestHandler):
             "cash": account["cash_balance"],
             "baseCurrency": account["base_currency"],
             "activeSymbol": account["active_symbol"],
+            "strategySettings": strategy_settings,
             "symbols": symbols or DEFAULT_SYMBOLS,
             "positions": {
                 row["symbol"]: {
@@ -2543,11 +2638,12 @@ class Handler(SimpleHTTPRequestHandler):
         requested_scope = (query_data.get("scope") or ["watchlist"])[0]
         with db_connect() as conn:
             scope, symbols = scanner_symbols_for_scope(conn, user["id"], requested_scope)
+            user_strategy_settings = load_strategy_settings(conn, user["id"])
         if not symbols:
             self.end_json(200, {"scope": scope, "results": [], "topOpportunities": [], "errors": [], "serverTime": int(time.time() * 1000)})
             return
 
-        results, errors = scan_symbols(symbols)
+        results, errors = scan_symbols(symbols, user_strategy_settings)
         qualified = [item for item in results if item.get("passesFilter")]
         directional = [item for item in qualified if item["signal"] in {"BUY", "SELL"}]
         top_source = directional or qualified
@@ -2695,6 +2791,46 @@ class Handler(SimpleHTTPRequestHandler):
             return
         result = run_auto_trading_cycle(user["id"], triggered_by="manual")
         self.end_json(200, {"autoTrading": result, "state": self.load_state(user["id"])})
+
+    def handle_strategy_settings(self, parsed):
+        user = self.require_user()
+        if not user:
+            return
+        settings = clean_user_strategy_settings(self.read_json())
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO strategy_settings
+                        (user_id, ma_fast, ma_slow, macd_fast, macd_slow, macd_signal,
+                         rsi_period, rsi_buy_threshold, rsi_sell_threshold, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                    ON CONFLICT (user_id)
+                    DO UPDATE SET
+                        ma_fast = EXCLUDED.ma_fast,
+                        ma_slow = EXCLUDED.ma_slow,
+                        macd_fast = EXCLUDED.macd_fast,
+                        macd_slow = EXCLUDED.macd_slow,
+                        macd_signal = EXCLUDED.macd_signal,
+                        rsi_period = EXCLUDED.rsi_period,
+                        rsi_buy_threshold = EXCLUDED.rsi_buy_threshold,
+                        rsi_sell_threshold = EXCLUDED.rsi_sell_threshold,
+                        updated_at = now()
+                    """,
+                    (
+                        user["id"],
+                        settings["maFast"],
+                        settings["maSlow"],
+                        settings["macdFast"],
+                        settings["macdSlow"],
+                        settings["macdSignal"],
+                        settings["rsiPeriod"],
+                        Decimal(str(settings["rsiBuyThreshold"])),
+                        Decimal(str(settings["rsiSellThreshold"])),
+                    ),
+                )
+            conn.commit()
+        self.end_json(200, {"state": self.load_state(user["id"])})
 
     def handle_add_watchlist(self, parsed):
         user = self.require_user()

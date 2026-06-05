@@ -34,6 +34,20 @@ CREATE TABLE IF NOT EXISTS watchlist (
     PRIMARY KEY (user_id, symbol)
 );
 
+CREATE TABLE IF NOT EXISTS strategy_settings (
+    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    ma_fast INTEGER NOT NULL DEFAULT 5,
+    ma_slow INTEGER NOT NULL DEFAULT 20,
+    macd_fast INTEGER NOT NULL DEFAULT 12,
+    macd_slow INTEGER NOT NULL DEFAULT 26,
+    macd_signal INTEGER NOT NULL DEFAULT 9,
+    rsi_period INTEGER NOT NULL DEFAULT 14,
+    rsi_buy_threshold NUMERIC(10, 4) NOT NULL DEFAULT 30,
+    rsi_sell_threshold NUMERIC(10, 4) NOT NULL DEFAULT 70,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS positions (
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     symbol TEXT NOT NULL,
