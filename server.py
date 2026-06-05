@@ -856,7 +856,7 @@ def scan_watchlist_symbol(symbol):
     return rows
 
 
-def scanner_symbols_for_scope(conn, user_id, scope="watchlist"):
+def scanner_symbols_for_scope(conn, user_id, scope="watchlist", include_crypto=False):
     requested = (scope or "watchlist").strip().lower()
     if requested not in {"watchlist", "us", "a", "hk", "crypto", "mixed"}:
         requested = "watchlist"
@@ -871,6 +871,9 @@ def scanner_symbols_for_scope(conn, user_id, scope="watchlist"):
         symbols = SCANNER_UNIVERSES[requested]
     elif requested == "mixed":
         symbols = watchlist + SCANNER_UNIVERSES["us"] + SCANNER_UNIVERSES["a"] + SCANNER_UNIVERSES["hk"] + SCANNER_UNIVERSES["crypto"]
+
+    if include_crypto:
+        symbols = SCANNER_UNIVERSES["crypto"] + symbols
 
     normalized = []
     seen = set()
@@ -1363,7 +1366,7 @@ def clean_auto_settings_payload(data):
             value = default
         return value if value in allowed else default
 
-    scope = (data.get("scanScope") or "watchlist").strip().lower()
+    scope = (data.get("scanScope") or "mixed").strip().lower()
     if scope not in {"watchlist", "us", "a", "hk", "crypto", "mixed"}:
         scope = "watchlist"
     quality_mode = (data.get("qualityMode") or "normal").strip().lower()
@@ -1671,7 +1674,7 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
             return {"actions": actions, "skipped": skipped, "logs": logs, "stateChanged": True, "settings": auto_trading_stats(conn, user_id)}
 
         if scanner_results is None:
-            scope, symbols = scanner_symbols_for_scope(conn, user_id, scan_scope or settings["scan_scope"])
+            scope, symbols = scanner_symbols_for_scope(conn, user_id, scan_scope or settings["scan_scope"], include_crypto=True)
             scanner_results, scan_errors = scan_symbols(symbols)
             for error in scan_errors:
                 skipped.append({"symbol": error["symbol"], "reason": error["error"]})

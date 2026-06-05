@@ -273,7 +273,7 @@ function emptyState() {
       maxTotalDrawdownPct: 20,
       cooldownHours: 6,
       allowAddPosition: false,
-      scanScope: "watchlist",
+      scanScope: "mixed",
       qualityMode: "normal",
       qualityMinScore: 0,
       qualityMinSharpe: -0.5,
@@ -1292,7 +1292,7 @@ function renderAutoTrading() {
   const enabled = Boolean(auto.enabled);
   const stopped = Boolean(auto.stopped);
   els.autoEnabledInput.checked = enabled;
-  els.autoScanScopeSelect.value = auto.scanScope || "watchlist";
+  els.autoScanScopeSelect.value = auto.scanScope || "mixed";
   els.autoPositionPctSelect.value = String(Number(auto.positionPct || 10));
   els.autoMaxPositionsSelect.value = String(Number(auto.maxPositions || 3));
   els.autoMaxLossSelect.value = String(Number(auto.maxDailyLossPct || 5));
@@ -1392,7 +1392,7 @@ function openScannerResult(symbol, strategyName) {
 function autoSettingsPayload() {
   return {
     enabled: Boolean(els.autoEnabledInput?.checked),
-    scanScope: els.autoScanScopeSelect?.value || "watchlist",
+    scanScope: els.autoScanScopeSelect?.value || "mixed",
     positionPct: Number(els.autoPositionPctSelect?.value || 10),
     maxPositions: Number(els.autoMaxPositionsSelect?.value || 3),
     maxDailyLossPct: Number(els.autoMaxLossSelect?.value || 5),
