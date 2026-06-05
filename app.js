@@ -117,6 +117,7 @@ const els = {
   signalHistoryBody: document.querySelector("#signalHistoryBody"),
   scannerRunBtn: document.querySelector("#scannerRunBtn"),
   scannerScopeSelect: document.querySelector("#scannerScopeSelect"),
+  scannerSignalModeSelect: document.querySelector("#scannerSignalModeSelect"),
   scannerSignalFilter: document.querySelector("#scannerSignalFilter"),
   scannerMarketFilter: document.querySelector("#scannerMarketFilter"),
   scannerStrategyFilter: document.querySelector("#scannerStrategyFilter"),
@@ -142,6 +143,7 @@ const els = {
   autoSignalsExecuted: document.querySelector("#autoSignalsExecuted"),
   autoSignalsRejected: document.querySelector("#autoSignalsRejected"),
   autoScanScopeSelect: document.querySelector("#autoScanScopeSelect"),
+  autoSignalModeSelect: document.querySelector("#autoSignalModeSelect"),
   autoPositionPctSelect: document.querySelector("#autoPositionPctSelect"),
   autoMaxPositionsSelect: document.querySelector("#autoMaxPositionsSelect"),
   autoMaxLossSelect: document.querySelector("#autoMaxLossSelect"),
@@ -293,6 +295,7 @@ function emptyState() {
       cooldownHours: 6,
       allowAddPosition: false,
       scanScope: "mixed",
+      signalMode: "best",
       qualityMode: "normal",
       qualityMinScore: 0,
       qualityMinSharpe: -0.5,
@@ -1287,18 +1290,19 @@ function filteredScannerResults() {
   const rows = scannerResults.filter((item) => {
     if (signal !== "all" && item.signal !== signal) return false;
     if (market !== "all" && item.marketKey !== market) return false;
-    if (strategy !== "all" && item.strategy !== strategy) return false;
+    if (strategy !== "all" && (item.bestStrategy || item.strategy) !== strategy) return false;
     if (quality === "qualified" && !item.passesFilter) return false;
     return true;
   });
   const sorters = {
     score: (a, b) => Number(b.finalScore || 0) - Number(a.finalScore || 0),
+    best: (a, b) => Number(b.bestScore || b.strategyScore || 0) - Number(a.bestScore || a.strategyScore || 0),
     strength: (a, b) => Number(b.strength || 0) - Number(a.strength || 0),
     return: (a, b) => Number(b.returnPct || 0) - Number(a.returnPct || 0),
     sharpe: (a, b) => Number(b.sharpeRatio || 0) - Number(a.sharpeRatio || 0),
     recent: (a, b) => Number(b.time || 0) - Number(a.time || 0)
   };
-  return rows.sort(sorters[sort] || sorters.score);
+  return rows.sort(sorters[sort] || sorters.best || sorters.score);
 }
 
 function renderScanner() {
@@ -1308,32 +1312,31 @@ function renderScanner() {
     els.scannerTop.innerHTML = `<div class="scanner-empty">No scanner results yet.</div>`;
   } else {
     els.scannerTop.innerHTML = topRows.slice(0, 10).map((item) => `
-      <button class="scanner-card" type="button" data-symbol="${item.symbol}" data-strategy="${item.strategy}">
+      <button class="scanner-card" type="button" data-symbol="${item.symbol}" data-strategy="${item.bestStrategy || item.strategy}">
         <span>${item.symbol}</span>
         <strong>${fmtMoney(item.currentPrice, item.currency)}</strong>
-        <small>${strategyLabel(item.strategy)} / ${item.signal} / ${item.rating || "Avoid"}</small>
-        <b class="${scannerSignalClass(item.signal)}">${Number(item.finalScore || 0).toFixed(1)}</b>
+        <small>${strategyLabel(item.bestStrategy || item.strategy)} / ${(item.finalSignal || item.signal)} / ${item.rating || "Avoid"}</small>
+        <b class="${scannerSignalClass(item.finalSignal || item.signal)}">${Number(item.bestScore || item.strategyScore || 0).toFixed(2)}</b>
       </button>
     `).join("");
   }
 
   const rows = filteredScannerResults();
   if (!rows.length) {
-    els.scannerBody.innerHTML = `<tr><td colspan="15">No scanner rows match the current filters.</td></tr>`;
+    els.scannerBody.innerHTML = `<tr><td colspan="13">No scanner rows match the current filters.</td></tr>`;
     return;
   }
   els.scannerBody.innerHTML = rows.map((item) => `
-    <tr data-symbol="${item.symbol}" data-strategy="${item.strategy}" class="${item.passesFilter ? "" : "muted-row"}">
+    <tr data-symbol="${item.symbol}" data-strategy="${item.bestStrategy || item.strategy}" class="${item.passesFilter ? "" : "muted-row"}">
       <td><strong>${item.symbol}</strong></td>
       <td>${item.name || "--"}</td>
       <td>${item.market || "--"}</td>
       <td>${fmtMoney(item.currentPrice, item.currency)}</td>
-      <td>${strategyLabel(item.strategy)}</td>
-      <td class="${scannerSignalClass(item.signal)}">${item.signal}</td>
-      <td><span class="strength-bar score-bar"><i style="width:${Math.max(0, Math.min(100, Number(item.finalScore || 0)))}%"></i></span><b>${Number(item.finalScore || 0).toFixed(1)}</b></td>
+      <td>${strategyLabel(item.bestStrategy || item.strategy)}</td>
+      <td class="${scannerSignalClass(item.finalSignal || item.signal)}">${item.finalSignal || item.signal}</td>
+      <td>${Number(item.strategyScore || item.bestScore || 0).toFixed(2)}</td>
+      <td>${Number(item.bestScore || item.strategyScore || 0).toFixed(2)}</td>
       <td>${item.rating || "Avoid"}</td>
-      <td>${Number(item.suggestedPositionSize || 0).toFixed(0)}%</td>
-      <td><span class="strength-bar"><i style="width:${Math.max(0, Math.min(100, Number(item.strength || 0)))}%"></i></span><b>${number.format(item.strength || 0)}</b></td>
       <td class="${Number(item.returnPct || 0) >= 0 ? "up" : "down"}">${percentText(item.returnPct)}</td>
       <td>${ratioText(item.sharpeRatio)}</td>
       <td>${percentText(item.maxDrawdown)}</td>
@@ -1350,6 +1353,7 @@ function renderAutoTrading() {
   const stopped = Boolean(auto.stopped);
   els.autoEnabledInput.checked = enabled;
   els.autoScanScopeSelect.value = auto.scanScope || "mixed";
+  els.autoSignalModeSelect.value = auto.signalMode || "best";
   els.autoPositionPctSelect.value = String(Number(auto.positionPct || 10));
   els.autoMaxPositionsSelect.value = String(Number(auto.maxPositions || 3));
   els.autoMaxLossSelect.value = String(Number(auto.maxDailyLossPct || 5));
@@ -1412,9 +1416,10 @@ async function loadScanner() {
     return;
   }
   const scope = els.scannerScopeSelect?.value || "watchlist";
+  const signalMode = els.scannerSignalModeSelect?.value || "best";
   if (els.scannerHint) els.scannerHint.textContent = `Scanning ${scope}...`;
   try {
-    const data = await apiGet(`/api/scanner?scope=${encodeURIComponent(scope)}`);
+    const data = await apiGet(`/api/scanner?scope=${encodeURIComponent(scope)}&signalMode=${encodeURIComponent(signalMode)}`);
     scannerResults = data.results || [];
     scannerTopOpportunities = data.topOpportunities || [];
     scannerLoadedAt = data.serverTime || Date.now();
@@ -1450,6 +1455,7 @@ function autoSettingsPayload() {
   return {
     enabled: Boolean(els.autoEnabledInput?.checked),
     scanScope: els.autoScanScopeSelect?.value || "mixed",
+    signalMode: els.autoSignalModeSelect?.value || "best",
     positionPct: Number(els.autoPositionPctSelect?.value || 10),
     maxPositions: Number(els.autoMaxPositionsSelect?.value || 3),
     maxDailyLossPct: Number(els.autoMaxLossSelect?.value || 5),
@@ -2329,6 +2335,9 @@ els.clearHistoryBtn.addEventListener("click", clearHistory);
 els.exportTradesBtn.addEventListener("click", exportTrades);
 els.scannerRunBtn.addEventListener("click", loadScanner);
 els.scannerScopeSelect.addEventListener("change", () => {
+  scannerLoadedAt = 0;
+});
+els.scannerSignalModeSelect.addEventListener("change", () => {
   scannerLoadedAt = 0;
 });
 els.scannerSignalFilter.addEventListener("change", renderScanner);

@@ -851,6 +851,82 @@ def scanner_final_score(strength, sharpe, return_pct, max_drawdown):
     )
 
 
+def strategy_decision_score(item):
+    sharpe = float(item.get("sharpeRatio") or 0)
+    return_pct = float(item.get("returnPct") or 0)
+    drawdown = float(item.get("maxDrawdown") or 0)
+    return round(0.6 * sharpe + 0.3 * return_pct - 0.1 * drawdown, 4)
+
+
+def signal_mode_value(value):
+    mode = (value or "best").strip().lower()
+    return mode if mode in {"best", "weighted", "individual"} else "best"
+
+
+def scanner_decision_results(results, signal_mode="best"):
+    mode = signal_mode_value(signal_mode)
+    if mode == "individual":
+        return [
+            {
+                **item,
+                "bestStrategy": item.get("strategy"),
+                "bestScore": strategy_decision_score(item),
+                "strategyScore": strategy_decision_score(item),
+                "finalSignal": item.get("signal"),
+                "signalMode": mode,
+                "sourceStrategies": [item.get("strategy")],
+            }
+            for item in results
+        ]
+
+    grouped = {}
+    for item in results:
+        grouped.setdefault(item["symbol"], []).append(item)
+
+    decisions = []
+    for symbol, rows in grouped.items():
+        scored = [{**item, "strategyScore": strategy_decision_score(item)} for item in rows]
+        if mode == "weighted":
+            signal_weights = {"BUY": 0.0, "SELL": 0.0, "HOLD": 0.0}
+            for item in scored:
+                weight = max(0.01, item["strategyScore"] + 100)
+                signal_weights[item.get("signal") or "HOLD"] = signal_weights.get(item.get("signal") or "HOLD", 0.0) + weight
+            final_signal = max(signal_weights, key=signal_weights.get)
+            candidates = [item for item in scored if item.get("signal") == final_signal] or scored
+            best = max(candidates, key=lambda item: item["strategyScore"])
+            best_score = round(signal_weights.get(final_signal, 0.0) / max(1, len(scored)), 4)
+        else:
+            best = max(scored, key=lambda item: item["strategyScore"])
+            final_signal = best.get("signal")
+            best_score = best["strategyScore"]
+
+        decisions.append(
+            {
+                **best,
+                "bestStrategy": best.get("strategy"),
+                "bestScore": best_score,
+                "strategyScore": best["strategyScore"],
+                "finalSignal": final_signal,
+                "signal": final_signal,
+                "signalMode": mode,
+                "sourceStrategies": [item.get("strategy") for item in scored],
+                "strategyCandidates": [
+                    {
+                        "strategy": item.get("strategy"),
+                        "signal": item.get("signal"),
+                        "strategyScore": item["strategyScore"],
+                        "sharpeRatio": item.get("sharpeRatio"),
+                        "returnPct": item.get("returnPct"),
+                        "maxDrawdown": item.get("maxDrawdown"),
+                    }
+                    for item in sorted(scored, key=lambda item: item["strategyScore"], reverse=True)
+                ],
+            }
+        )
+    decisions.sort(key=lambda item: (item.get("bestScore") or 0, item.get("finalScore") or 0), reverse=True)
+    return decisions
+
+
 def quality_filter_config(settings):
     mode = (settings.get("quality_mode") or "normal").lower()
     if mode == "custom":
@@ -1460,6 +1536,7 @@ def clean_auto_settings_payload(data):
     scope = (data.get("scanScope") or "mixed").strip().lower()
     if scope not in {"watchlist", "us", "a", "hk", "crypto", "mixed"}:
         scope = "watchlist"
+    signal_mode = signal_mode_value(data.get("signalMode") or "best")
     quality_mode = (data.get("qualityMode") or "normal").strip().lower()
     if quality_mode not in {"strict", "normal", "loose", "custom"}:
         quality_mode = "normal"
@@ -1472,6 +1549,7 @@ def clean_auto_settings_payload(data):
         "cooldownHours": allowed_number("cooldownHours", 6, {1, 3, 6, 12, 24}),
         "allowAddPosition": bool(data.get("allowAddPosition")),
         "scanScope": scope,
+        "signalMode": signal_mode,
         "qualityMode": quality_mode,
         "qualityMinScore": numeric_value("qualityMinScore", QUALITY_FILTER_PRESETS["normal"]["min_score"], 0, 100),
         "qualityMinSharpe": numeric_value("qualityMinSharpe", QUALITY_FILTER_PRESETS["normal"]["min_sharpe"], -10, 10),
@@ -1494,7 +1572,7 @@ def auto_trading_stats(conn, user_id):
         cur.execute(
             """
             SELECT enabled, stopped, stop_reason, position_pct, max_positions, max_daily_loss_pct,
-                   max_total_drawdown_pct, cooldown_hours, allow_add_position, scan_scope,
+                   max_total_drawdown_pct, cooldown_hours, allow_add_position, scan_scope, signal_mode,
                    quality_mode, quality_min_score, quality_min_sharpe, quality_min_return_pct,
                    quality_max_drawdown_pct, quality_min_trade_count,
                    signals_generated, signals_passed_filter, signals_executed, signals_rejected,
@@ -1565,6 +1643,7 @@ def auto_trading_stats(conn, user_id):
         "cooldownHours": settings["cooldown_hours"],
         "allowAddPosition": settings["allow_add_position"],
         "scanScope": settings["scan_scope"],
+        "signalMode": settings["signal_mode"],
         "qualityMode": settings["quality_mode"],
         "qualityMinScore": settings["quality_min_score"],
         "qualityMinSharpe": settings["quality_min_sharpe"],
@@ -1774,6 +1853,7 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
         else:
             scope = scan_scope or settings["scan_scope"]
 
+        scanner_results = scanner_decision_results(scanner_results, settings["signal_mode"])
         quality_config = quality_filter_config(settings)
         signals_generated = len(scanner_results)
         signals_passed = 0
@@ -2636,25 +2716,29 @@ class Handler(SimpleHTTPRequestHandler):
             return
         query_data = parse_qs(parsed.query)
         requested_scope = (query_data.get("scope") or ["watchlist"])[0]
+        requested_mode = signal_mode_value((query_data.get("signalMode") or ["best"])[0])
         with db_connect() as conn:
             scope, symbols = scanner_symbols_for_scope(conn, user["id"], requested_scope)
             user_strategy_settings = load_strategy_settings(conn, user["id"])
         if not symbols:
-            self.end_json(200, {"scope": scope, "results": [], "topOpportunities": [], "errors": [], "serverTime": int(time.time() * 1000)})
+            self.end_json(200, {"scope": scope, "signalMode": requested_mode, "results": [], "topOpportunities": [], "errors": [], "serverTime": int(time.time() * 1000)})
             return
 
-        results, errors = scan_symbols(symbols, user_strategy_settings)
+        raw_results, errors = scan_symbols(symbols, user_strategy_settings)
+        results = scanner_decision_results(raw_results, requested_mode)
         qualified = [item for item in results if item.get("passesFilter")]
-        directional = [item for item in qualified if item["signal"] in {"BUY", "SELL"}]
+        directional = [item for item in qualified if item["finalSignal"] in {"BUY", "SELL"}]
         top_source = directional or qualified
-        top_opportunities = sorted(top_source, key=lambda item: (item["finalScore"], item["returnPct"]), reverse=True)[:10]
+        top_opportunities = sorted(top_source, key=lambda item: (item.get("bestScore") or 0, item.get("finalScore") or 0), reverse=True)[:10]
         with db_connect() as conn:
             auto_payload = auto_trading_stats(conn, user["id"])
         self.end_json(
             200,
             {
                 "scope": scope,
+                "signalMode": requested_mode,
                 "results": results,
+                "rawResults": raw_results,
                 "topOpportunities": top_opportunities,
                 "errors": errors,
                 "autoTrading": {"settings": auto_payload, "actions": [], "skipped": [], "logs": auto_payload.get("logs", [])},
@@ -2728,11 +2812,11 @@ class Handler(SimpleHTTPRequestHandler):
                     """
                     INSERT INTO auto_trading_settings
                         (user_id, enabled, stopped, stop_reason, position_pct, max_positions, max_daily_loss_pct,
-                         max_total_drawdown_pct, cooldown_hours, allow_add_position, scan_scope, scheduler_status,
+                         max_total_drawdown_pct, cooldown_hours, allow_add_position, scan_scope, signal_mode, scheduler_status,
                          quality_mode, quality_min_score, quality_min_sharpe, quality_min_return_pct,
                          quality_max_drawdown_pct, quality_min_trade_count,
                          enabled_at, updated_at)
-                    VALUES (%s, %s, false, '', %s, %s, %s, %s, %s, %s, %s, %s,
+                    VALUES (%s, %s, false, '', %s, %s, %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s,
                             CASE WHEN %s THEN now() ELSE NULL END, now())
                     ON CONFLICT (user_id)
@@ -2747,6 +2831,7 @@ class Handler(SimpleHTTPRequestHandler):
                         cooldown_hours = EXCLUDED.cooldown_hours,
                         allow_add_position = EXCLUDED.allow_add_position,
                         scan_scope = EXCLUDED.scan_scope,
+                        signal_mode = EXCLUDED.signal_mode,
                         scheduler_status = EXCLUDED.scheduler_status,
                         quality_mode = EXCLUDED.quality_mode,
                         quality_min_score = EXCLUDED.quality_min_score,
@@ -2771,6 +2856,7 @@ class Handler(SimpleHTTPRequestHandler):
                         Decimal(str(settings["cooldownHours"])),
                         settings["allowAddPosition"],
                         settings["scanScope"],
+                        settings["signalMode"],
                         "running" if settings["enabled"] else "disabled",
                         settings["qualityMode"],
                         Decimal(str(settings["qualityMinScore"])),

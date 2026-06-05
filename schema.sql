@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS auto_trading_settings (
     cooldown_hours NUMERIC(10, 4) NOT NULL DEFAULT 6,
     allow_add_position BOOLEAN NOT NULL DEFAULT false,
     scan_scope TEXT NOT NULL DEFAULT 'mixed',
+    signal_mode TEXT NOT NULL DEFAULT 'best',
     quality_mode TEXT NOT NULL DEFAULT 'normal',
     quality_min_score NUMERIC(10, 4) NOT NULL DEFAULT 0,
     quality_min_sharpe NUMERIC(10, 4) NOT NULL DEFAULT -0.5,
@@ -151,6 +152,7 @@ ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS cooldown_hours NUMERI
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS allow_add_position BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS scan_scope TEXT NOT NULL DEFAULT 'mixed';
 ALTER TABLE auto_trading_settings ALTER COLUMN scan_scope SET DEFAULT 'mixed';
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS signal_mode TEXT NOT NULL DEFAULT 'best';
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_mode TEXT NOT NULL DEFAULT 'normal';
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_min_score NUMERIC(10, 4) NOT NULL DEFAULT 0;
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_min_sharpe NUMERIC(10, 4) NOT NULL DEFAULT -0.5;

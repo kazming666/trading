@@ -300,6 +300,14 @@
 
           <div class="scanner-toolbar">
             <label>
+              Signal Mode
+              <select id="scannerSignalModeSelect">
+                <option value="best" selected>Best Strategy Only</option>
+                <option value="weighted">Weighted Voting</option>
+                <option value="individual">Individual Strategies</option>
+              </select>
+            </label>
+            <label>
               &#20449;&#21495;
               <select id="scannerSignalFilter">
                 <option value="all">&#20840;&#37096;</option>
@@ -329,6 +337,7 @@
             <label>
               &#25490;&#24207;
               <select id="scannerSortSelect">
+                <option value="best" selected>Best Score</option>
                 <option value="score">Final Score</option>
                 <option value="strength">&#20449;&#21495;&#24378;&#24230;</option>
                 <option value="return">&#22238;&#27979;&#25910;&#30410;&#29575;</option>
@@ -353,12 +362,11 @@
                   <th>&#21517;&#31216;</th>
                   <th>&#24066;&#22330;</th>
                   <th>&#24403;&#21069;&#20215;&#26684;</th>
-                  <th>&#31574;&#30053;</th>
-                  <th>&#20449;&#21495;</th>
-                  <th>Final Score</th>
+                  <th>Best Strategy</th>
+                  <th>Final Signal</th>
+                  <th>Strategy Score</th>
+                  <th>Best Score</th>
                   <th>Rating</th>
-                  <th>Suggested Position</th>
-                  <th>&#20449;&#21495;&#24378;&#24230;</th>
                   <th>&#22238;&#27979;&#25910;&#30410;&#29575;</th>
                   <th>Sharpe</th>
                   <th>&#26368;&#22823;&#22238;&#25764;</th>
@@ -458,6 +466,14 @@
                 <option value="hk">HK Stocks</option>
                 <option value="crypto">Crypto</option>
                 <option value="mixed" selected>Mixed</option>
+              </select>
+            </label>
+            <label>
+              Signal Mode
+              <select id="autoSignalModeSelect">
+                <option value="best" selected>Best Strategy Only</option>
+                <option value="weighted">Weighted Voting</option>
+                <option value="individual">Individual Strategies</option>
               </select>
             </label>
             <label>
@@ -972,6 +988,6 @@ ETHUSDT</textarea>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260606b"></script>
+    <script src="app.js?v=20260606c"></script>
   </body>
 </html>
