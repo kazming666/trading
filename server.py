@@ -73,9 +73,9 @@ SCANNER_UNIVERSES = {
     "crypto": CRYPTO_SYMBOLS,
 }
 QUALITY_FILTER_PRESETS = {
-    "strict": {"min_score": 0, "min_sharpe": 0, "min_return": 0, "max_drawdown": 35, "min_trades": 5},
-    "normal": {"min_score": 0, "min_sharpe": -0.5, "min_return": -10, "max_drawdown": 50, "min_trades": 3},
-    "loose": {"min_score": 60, "min_sharpe": -999, "min_return": -999, "max_drawdown": 999, "min_trades": 0},
+    "strict": {"min_score": 0, "min_sharpe": 0, "min_return": 0, "max_drawdown": 35, "min_trades": 5, "checks": {"score", "sharpe", "return", "drawdown", "trades"}},
+    "normal": {"min_score": 0, "min_sharpe": -0.5, "min_return": -10, "max_drawdown": 50, "min_trades": 3, "checks": {"score", "sharpe", "return", "drawdown", "trades"}},
+    "loose": {"min_score": 60, "min_sharpe": -10, "min_return": -100, "max_drawdown": 100, "min_trades": 0, "checks": {"score"}},
 }
 
 
@@ -952,15 +952,20 @@ def scanner_decision_results(results, signal_mode="best"):
 
 
 def quality_filter_config(settings):
+    def configured_value(name, default):
+        value = settings.get(name)
+        return default if value is None else value
+
     mode = (settings.get("quality_mode") or "normal").lower()
     if mode == "custom":
         return {
             "mode": "custom",
-            "min_score": float(settings.get("quality_min_score") or 0),
-            "min_sharpe": float(settings.get("quality_min_sharpe") or -0.5),
-            "min_return": float(settings.get("quality_min_return_pct") or -10),
-            "max_drawdown": float(settings.get("quality_max_drawdown_pct") or 50),
-            "min_trades": int(settings.get("quality_min_trade_count") or 3),
+            "min_score": float(configured_value("quality_min_score", 0)),
+            "min_sharpe": float(configured_value("quality_min_sharpe", -0.5)),
+            "min_return": float(configured_value("quality_min_return_pct", -10)),
+            "max_drawdown": float(configured_value("quality_max_drawdown_pct", 50)),
+            "min_trades": int(configured_value("quality_min_trade_count", 3)),
+            "checks": {"score", "sharpe", "return", "drawdown", "trades"},
         }
     preset = QUALITY_FILTER_PRESETS.get(mode, QUALITY_FILTER_PRESETS["normal"])
     return {"mode": mode if mode in QUALITY_FILTER_PRESETS else "normal", **preset}
@@ -976,15 +981,16 @@ def passes_auto_quality_filter(item, config):
     drawdown = float(item.get("maxDrawdown") or 0)
     trades = int(item.get("tradeCount") or 0)
     failures = []
-    if score <= float(config["min_score"]):
+    checks = config.get("checks") or {"score", "sharpe", "return", "drawdown", "trades"}
+    if "score" in checks and score <= float(config["min_score"]):
         failures.append(f"Score <= {config['min_score']:g}")
-    if sharpe <= float(config["min_sharpe"]):
+    if "sharpe" in checks and sharpe <= float(config["min_sharpe"]):
         failures.append(f"Sharpe <= {config['min_sharpe']:g}")
-    if return_pct <= float(config["min_return"]):
+    if "return" in checks and return_pct <= float(config["min_return"]):
         failures.append(f"Return <= {config['min_return']:g}%")
-    if drawdown >= float(config["max_drawdown"]):
+    if "drawdown" in checks and drawdown >= float(config["max_drawdown"]):
         failures.append(f"Drawdown >= {config['max_drawdown']:g}%")
-    if trades < int(config["min_trades"]):
+    if "trades" in checks and trades < int(config["min_trades"]):
         failures.append(f"Trades < {config['min_trades']}")
     if failures:
         return False, f"Failed {config['mode']} quality filter: " + ", ".join(failures)

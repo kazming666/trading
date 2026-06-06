@@ -3,7 +3,7 @@ const DEFAULT_CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRP
 const AUTO_QUALITY_PRESETS = {
   strict: { score: 0, sharpe: 0, returnPct: 0, drawdown: 35, trades: 5 },
   normal: { score: 0, sharpe: -0.5, returnPct: -10, drawdown: 50, trades: 3 },
-  loose: { score: 60, sharpe: -999, returnPct: -999, drawdown: 999, trades: 0 }
+  loose: { score: 60, sharpe: -10, returnPct: -100, drawdown: 100, trades: 0 }
 };
 const RANGE_LABELS = {
   "1d": "\u0031\u5929",
@@ -1394,12 +1394,14 @@ function renderAutoTrading() {
   els.autoMaxCryptoExposureInput.value = String(Number(auto.maxCryptoExposurePct ?? 20));
   els.autoMaxDailyOrdersInput.value = String(Number(auto.maxDailyOrders ?? 10));
   els.autoKillSwitchInput.checked = Boolean(auto.killSwitch);
-  els.autoQualityModeSelect.value = auto.qualityMode || "normal";
-  els.autoQualityMinScoreInput.value = String(Number(auto.qualityMinScore ?? 0));
-  els.autoQualityMinSharpeInput.value = String(Number(auto.qualityMinSharpe ?? -0.5));
-  els.autoQualityMinReturnInput.value = String(Number(auto.qualityMinReturnPct ?? -10));
-  els.autoQualityMaxDrawdownInput.value = String(Number(auto.qualityMaxDrawdownPct ?? 50));
-  els.autoQualityMinTradesInput.value = String(Number(auto.qualityMinTradeCount ?? 3));
+  const qualityMode = auto.qualityMode || "normal";
+  const qualityPreset = AUTO_QUALITY_PRESETS[qualityMode];
+  els.autoQualityModeSelect.value = qualityMode;
+  els.autoQualityMinScoreInput.value = String(Number(qualityPreset?.score ?? auto.qualityMinScore ?? 0));
+  els.autoQualityMinSharpeInput.value = String(Number(qualityPreset?.sharpe ?? auto.qualityMinSharpe ?? -0.5));
+  els.autoQualityMinReturnInput.value = String(Number(qualityPreset?.returnPct ?? auto.qualityMinReturnPct ?? -10));
+  els.autoQualityMaxDrawdownInput.value = String(Number(qualityPreset?.drawdown ?? auto.qualityMaxDrawdownPct ?? 50));
+  els.autoQualityMinTradesInput.value = String(Number(qualityPreset?.trades ?? auto.qualityMinTradeCount ?? 3));
   els.autoRunStatus.textContent = auto.killSwitch ? "Kill Switch" : stopped ? "Stopped" : enabled ? "Running" : "Disabled";
   els.autoRunStatus.className = auto.killSwitch || stopped ? "down" : enabled ? "up" : "";
   els.autoEnabledAt.textContent = auto.enabledAt ? fmtDateTime(auto.enabledAt) : "--";
@@ -1524,6 +1526,18 @@ function applyAutoQualityPreset() {
   els.autoQualityMinReturnInput.value = String(preset.returnPct);
   els.autoQualityMaxDrawdownInput.value = String(preset.drawdown);
   els.autoQualityMinTradesInput.value = String(preset.trades);
+  els.autoHint.className = "trade-hint";
+  els.autoHint.textContent = mode === "loose"
+    ? "Loose mode only checks BUY/SELL signal and Minimum Score. Other displayed thresholds are ignored."
+    : `${mode[0].toUpperCase()}${mode.slice(1)} preset loaded. Change any threshold to switch to Custom mode.`;
+}
+
+function markAutoQualityCustom() {
+  if (els.autoQualityModeSelect.value !== "custom") {
+    els.autoQualityModeSelect.value = "custom";
+    els.autoHint.className = "trade-hint";
+    els.autoHint.textContent = "Quality Mode changed to Custom. Click Save Settings to apply these thresholds.";
+  }
 }
 
 async function saveAutoTradingSettings() {
@@ -1533,16 +1547,21 @@ async function saveAutoTradingSettings() {
   }
   els.autoHint.className = "trade-hint";
   els.autoHint.textContent = "Saving Auto Trading settings...";
+  els.autoSaveBtn.disabled = true;
   try {
-    const data = await apiPost("/api/auto-trading/settings", autoSettingsPayload());
+    const requested = autoSettingsPayload();
+    const data = await apiPost("/api/auto-trading/settings", requested);
     mergeServerState(data.state);
     state.autoTrading = data.autoTrading || state.autoTrading;
     latestAutoLogs = state.autoTrading.logs || latestAutoLogs;
-    els.autoHint.textContent = state.autoTrading.enabled ? "Auto Trading enabled for paper account only." : "Auto Trading disabled.";
+    els.autoHint.textContent = `Settings saved. Quality Mode: ${state.autoTrading.qualityMode || requested.qualityMode}.`;
     render();
     syncAutoTradingTimer();
   } catch (error) {
     els.autoHint.textContent = error.message;
+    els.autoHint.className = "trade-hint warning";
+  } finally {
+    els.autoSaveBtn.disabled = false;
   }
 }
 
@@ -2401,6 +2420,13 @@ els.autoSaveBtn.addEventListener("click", saveAutoTradingSettings);
 els.autoRunBtn.addEventListener("click", runAutoTradingNow);
 els.autoEnabledInput.addEventListener("change", saveAutoTradingSettings);
 els.autoQualityModeSelect.addEventListener("change", applyAutoQualityPreset);
+[
+  els.autoQualityMinScoreInput,
+  els.autoQualityMinSharpeInput,
+  els.autoQualityMinReturnInput,
+  els.autoQualityMaxDrawdownInput,
+  els.autoQualityMinTradesInput
+].forEach((input) => input.addEventListener("input", markAutoQualityCustom));
 els.runStrategyBtn.addEventListener("click", runStrategySignal);
 els.backtestStrategyBtn.addEventListener("click", runStrategyBacktest);
 els.optimizeStrategyBtn.addEventListener("click", optimizeStrategyParams);
