@@ -59,6 +59,12 @@ CREATE TABLE IF NOT EXISTS positions (
     signal_source TEXT,
     entry_reason TEXT,
     entry_price NUMERIC(20, 8),
+    highest_price NUMERIC(20, 8),
+    stop_loss_pct NUMERIC(10, 4),
+    take_profit_pct NUMERIC(10, 4),
+    trailing_stop_pct NUMERIC(10, 4),
+    max_holding_days INTEGER,
+    timeframe TEXT,
     opened_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -71,6 +77,12 @@ ALTER TABLE positions ADD COLUMN IF NOT EXISTS strategy_name TEXT;
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS signal_source TEXT;
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS entry_reason TEXT;
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS entry_price NUMERIC(20, 8);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS highest_price NUMERIC(20, 8);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS stop_loss_pct NUMERIC(10, 4);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS take_profit_pct NUMERIC(10, 4);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS trailing_stop_pct NUMERIC(10, 4);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS max_holding_days INTEGER;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS timeframe TEXT;
 
 CREATE TABLE IF NOT EXISTS orders (
     id BIGSERIAL PRIMARY KEY,
@@ -129,6 +141,16 @@ CREATE TABLE IF NOT EXISTS auto_trading_settings (
     allow_add_position BOOLEAN NOT NULL DEFAULT false,
     scan_scope TEXT NOT NULL DEFAULT 'mixed',
     signal_mode TEXT NOT NULL DEFAULT 'best',
+    timeframe TEXT NOT NULL DEFAULT '1h',
+    scan_interval_minutes INTEGER NOT NULL DEFAULT 15,
+    stop_loss_pct NUMERIC(10, 4) NOT NULL DEFAULT 5,
+    take_profit_pct NUMERIC(10, 4) NOT NULL DEFAULT 15,
+    trailing_stop_pct NUMERIC(10, 4) NOT NULL DEFAULT 8,
+    max_holding_days INTEGER NOT NULL DEFAULT 30,
+    max_portfolio_exposure_pct NUMERIC(10, 4) NOT NULL DEFAULT 70,
+    max_crypto_exposure_pct NUMERIC(10, 4) NOT NULL DEFAULT 20,
+    max_daily_orders INTEGER NOT NULL DEFAULT 10,
+    kill_switch BOOLEAN NOT NULL DEFAULT false,
     quality_mode TEXT NOT NULL DEFAULT 'normal',
     quality_min_score NUMERIC(10, 4) NOT NULL DEFAULT 0,
     quality_min_sharpe NUMERIC(10, 4) NOT NULL DEFAULT -0.5,
@@ -153,6 +175,16 @@ ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS allow_add_position BO
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS scan_scope TEXT NOT NULL DEFAULT 'mixed';
 ALTER TABLE auto_trading_settings ALTER COLUMN scan_scope SET DEFAULT 'mixed';
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS signal_mode TEXT NOT NULL DEFAULT 'best';
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS timeframe TEXT NOT NULL DEFAULT '1h';
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS scan_interval_minutes INTEGER NOT NULL DEFAULT 15;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS stop_loss_pct NUMERIC(10, 4) NOT NULL DEFAULT 5;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS take_profit_pct NUMERIC(10, 4) NOT NULL DEFAULT 15;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS trailing_stop_pct NUMERIC(10, 4) NOT NULL DEFAULT 8;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS max_holding_days INTEGER NOT NULL DEFAULT 30;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS max_portfolio_exposure_pct NUMERIC(10, 4) NOT NULL DEFAULT 70;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS max_crypto_exposure_pct NUMERIC(10, 4) NOT NULL DEFAULT 20;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS max_daily_orders INTEGER NOT NULL DEFAULT 10;
+ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS kill_switch BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_mode TEXT NOT NULL DEFAULT 'normal';
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_min_score NUMERIC(10, 4) NOT NULL DEFAULT 0;
 ALTER TABLE auto_trading_settings ADD COLUMN IF NOT EXISTS quality_min_sharpe NUMERIC(10, 4) NOT NULL DEFAULT -0.5;

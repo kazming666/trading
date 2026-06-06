@@ -331,6 +331,30 @@ def normalize_backtest_history(symbol, range_key, start_date=None, end_date=None
     return points
 
 
+def normalize_signal_history(symbol, timeframe="1h"):
+    symbol = normalize_market_symbol(symbol)
+    timeframe = timeframe if timeframe in {"1d", "1h", "15m"} else "1h"
+    if timeframe == "1d":
+        return normalize_backtest_history(symbol, "1y")[-260:]
+    if is_crypto_symbol(symbol):
+        interval, limit = ("15m", 500) if timeframe == "15m" else ("1h", 500)
+        return normalize_binance_points(binance_klines(symbol, interval, limit))
+    range_value, interval = ("1mo", "15m") if timeframe == "15m" else ("3mo", "1h")
+    chart = yahoo_chart(symbol, range_value, interval)
+    timestamps = chart.get("timestamp") or []
+    quote_data = ((chart.get("indicators") or {}).get("quote") or [{}])[0]
+    closes = quote_data.get("close") or []
+    volumes = quote_data.get("volume") or []
+    points = []
+    for index, (ts, close) in enumerate(zip(timestamps, closes)):
+        if close is None:
+            continue
+        points.append({"t": ts * 1000, "p": float(close), "c": float(close), "v": float(volumes[index] or 0) if index < len(volumes) else 0})
+    if len(points) < 30:
+        raise ValueError(f"Not enough {timeframe} history for scanning")
+    return points[-500:]
+
+
 def clean_strategy_params(strategy_name, params):
     params = params or {}
 
@@ -967,11 +991,12 @@ def passes_auto_quality_filter(item, config):
     return True, f"Passed {config['mode']} quality filter."
 
 
-def scan_watchlist_symbol(symbol, user_strategy_settings=None):
+def scan_watchlist_symbol(symbol, user_strategy_settings=None, timeframe="1d"):
     normalized = normalize_market_symbol(symbol)
     quote_data = normalize_quote(normalized)
-    points = normalize_backtest_history(normalized, "1y")[-260:]
-    if len(points) < 30:
+    backtest_points = normalize_backtest_history(normalized, "1y")[-260:]
+    points = normalize_signal_history(normalized, timeframe)
+    if len(points) < 30 or len(backtest_points) < 30:
         raise ValueError("Not enough historical data for scanning")
     market_key, market_label = market_kind(normalized)
     rows = []
@@ -986,7 +1011,7 @@ def scan_watchlist_symbol(symbol, user_strategy_settings=None):
         }
         signal = strategy_engine.generate_signal(strategy_name, normalized, market_data)
         try:
-            backtest = summarize_backtest_result(run_strategy_backtest(strategy_name, normalized, points, params))
+            backtest = summarize_backtest_result(run_strategy_backtest(strategy_name, normalized, backtest_points, params))
         except Exception:
             backtest = {"returnPct": 0, "sharpeRatio": 0, "maxDrawdown": 0, "tradeCount": 0}
         strength = signal_strength(strategy_name, signal["signal"], points, params)
@@ -1054,13 +1079,13 @@ def scanner_symbols_for_scope(conn, user_id, scope="watchlist", include_crypto=F
     return requested, normalized
 
 
-def scan_symbols(symbols, user_strategy_settings=None):
+def scan_symbols(symbols, user_strategy_settings=None, timeframe="1d"):
     if not symbols:
         return [], []
     results = []
     errors = []
     with ThreadPoolExecutor(max_workers=min(6, len(symbols))) as executor:
-        futures = {executor.submit(scan_watchlist_symbol, symbol, user_strategy_settings): symbol for symbol in symbols}
+        futures = {executor.submit(scan_watchlist_symbol, symbol, user_strategy_settings, timeframe): symbol for symbol in symbols}
         for future in as_completed(futures):
             symbol = futures[future]
             try:
@@ -1380,7 +1405,7 @@ def record_all_equity_snapshots():
         print(f"Warning: equity snapshot worker failed: {error}")
 
 
-def execute_paper_trade(conn, user_id, symbol, side, qty, quote_data=None, execution_source="manual", strategy_name=None, signal_source=None, entry_reason=None):
+def execute_paper_trade(conn, user_id, symbol, side, qty, quote_data=None, execution_source="manual", strategy_name=None, signal_source=None, entry_reason=None, position_risk=None):
     symbol = normalize_market_symbol(symbol)
     qty = Decimal(str(qty))
     if side not in {"buy", "sell"} or not symbol or qty <= 0:
@@ -1414,8 +1439,9 @@ def execute_paper_trade(conn, user_id, symbol, side, qty, quote_data=None, execu
             cur.execute(
                 """
                 INSERT INTO positions
-                    (user_id, symbol, qty, avg_price, currency, market, strategy_name, signal_source, entry_reason, entry_price)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (user_id, symbol, qty, avg_price, currency, market, strategy_name, signal_source, entry_reason, entry_price,
+                     highest_price, stop_loss_pct, take_profit_pct, trailing_stop_pct, max_holding_days, timeframe)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id, symbol)
                 DO UPDATE SET
                     qty = EXCLUDED.qty,
@@ -1426,10 +1452,19 @@ def execute_paper_trade(conn, user_id, symbol, side, qty, quote_data=None, execu
                     signal_source = COALESCE(positions.signal_source, EXCLUDED.signal_source),
                     entry_reason = COALESCE(positions.entry_reason, EXCLUDED.entry_reason),
                     entry_price = COALESCE(positions.entry_price, EXCLUDED.entry_price),
+                    highest_price = GREATEST(COALESCE(positions.highest_price, 0), EXCLUDED.highest_price),
                     opened_at = """ + position_opened_at_sql + """,
                     updated_at = now()
                 """,
-                (user_id, symbol, new_qty, new_avg, currency, market_label, strategy_name, signal_source, entry_reason, position_entry_price),
+                (
+                    user_id, symbol, new_qty, new_avg, currency, market_label, strategy_name, signal_source,
+                    entry_reason, position_entry_price, price,
+                    position_risk.get("stop_loss_pct") if position_risk else None,
+                    position_risk.get("take_profit_pct") if position_risk else None,
+                    position_risk.get("trailing_stop_pct") if position_risk else None,
+                    position_risk.get("max_holding_days") if position_risk else None,
+                    position_risk.get("timeframe") if position_risk else None,
+                ),
             )
         else:
             if current_qty < qty:
@@ -1537,6 +1572,9 @@ def clean_auto_settings_payload(data):
     if scope not in {"watchlist", "us", "a", "hk", "crypto", "mixed"}:
         scope = "watchlist"
     signal_mode = signal_mode_value(data.get("signalMode") or "best")
+    timeframe = (data.get("timeframe") or "1h").strip().lower()
+    if timeframe not in {"1d", "1h", "15m"}:
+        timeframe = "1h"
     quality_mode = (data.get("qualityMode") or "normal").strip().lower()
     if quality_mode not in {"strict", "normal", "loose", "custom"}:
         quality_mode = "normal"
@@ -1550,6 +1588,16 @@ def clean_auto_settings_payload(data):
         "allowAddPosition": bool(data.get("allowAddPosition")),
         "scanScope": scope,
         "signalMode": signal_mode,
+        "timeframe": timeframe,
+        "scanIntervalMinutes": allowed_int("scanIntervalMinutes", 15, {5, 15, 60}),
+        "stopLossPct": numeric_value("stopLossPct", 5, 0, 100),
+        "takeProfitPct": numeric_value("takeProfitPct", 15, 0, 1000),
+        "trailingStopPct": numeric_value("trailingStopPct", 8, 0, 100),
+        "maxHoldingDays": int_value("maxHoldingDays", 30, 1, 3650),
+        "maxPortfolioExposurePct": numeric_value("maxPortfolioExposurePct", 70, 0, 100),
+        "maxCryptoExposurePct": numeric_value("maxCryptoExposurePct", 20, 0, 100),
+        "maxDailyOrders": int_value("maxDailyOrders", 10, 1, 1000),
+        "killSwitch": bool(data.get("killSwitch")),
         "qualityMode": quality_mode,
         "qualityMinScore": numeric_value("qualityMinScore", QUALITY_FILTER_PRESETS["normal"]["min_score"], 0, 100),
         "qualityMinSharpe": numeric_value("qualityMinSharpe", QUALITY_FILTER_PRESETS["normal"]["min_sharpe"], -10, 10),
@@ -1573,6 +1621,8 @@ def auto_trading_stats(conn, user_id):
             """
             SELECT enabled, stopped, stop_reason, position_pct, max_positions, max_daily_loss_pct,
                    max_total_drawdown_pct, cooldown_hours, allow_add_position, scan_scope, signal_mode,
+                   timeframe, scan_interval_minutes, stop_loss_pct, take_profit_pct, trailing_stop_pct,
+                   max_holding_days, max_portfolio_exposure_pct, max_crypto_exposure_pct, max_daily_orders, kill_switch,
                    quality_mode, quality_min_score, quality_min_sharpe, quality_min_return_pct,
                    quality_max_drawdown_pct, quality_min_trade_count,
                    signals_generated, signals_passed_filter, signals_executed, signals_rejected,
@@ -1626,9 +1676,9 @@ def auto_trading_stats(conn, user_id):
     realized_pnl = trade_stats["realized_pnl"] or Decimal("0")
     cumulative_return = (realized_pnl / starting_cash * Decimal("100")) if starting_cash > 0 else Decimal("0")
     next_scan_at = None
-    if settings["enabled"] and not settings["stopped"]:
+    if settings["enabled"] and not settings["stopped"] and not settings["kill_switch"]:
         base_time = settings["last_run_at"] or datetime.now(timezone.utc)
-        next_scan_at = base_time + timedelta(seconds=AUTO_TRADING_INTERVAL_SECONDS)
+        next_scan_at = base_time + timedelta(minutes=int(settings["scan_interval_minutes"] or 15))
     running_time_ms = None
     if settings["enabled"] and settings["enabled_at"]:
         running_time_ms = max(0, int((datetime.now(timezone.utc) - settings["enabled_at"]).total_seconds() * 1000))
@@ -1644,6 +1694,16 @@ def auto_trading_stats(conn, user_id):
         "allowAddPosition": settings["allow_add_position"],
         "scanScope": settings["scan_scope"],
         "signalMode": settings["signal_mode"],
+        "timeframe": settings["timeframe"],
+        "scanIntervalMinutes": settings["scan_interval_minutes"],
+        "stopLossPct": settings["stop_loss_pct"],
+        "takeProfitPct": settings["take_profit_pct"],
+        "trailingStopPct": settings["trailing_stop_pct"],
+        "maxHoldingDays": settings["max_holding_days"],
+        "maxPortfolioExposurePct": settings["max_portfolio_exposure_pct"],
+        "maxCryptoExposurePct": settings["max_crypto_exposure_pct"],
+        "maxDailyOrders": settings["max_daily_orders"],
+        "killSwitch": settings["kill_switch"],
         "qualityMode": settings["quality_mode"],
         "qualityMinScore": settings["quality_min_score"],
         "qualityMinSharpe": settings["quality_min_sharpe"],
@@ -1807,7 +1867,7 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
             )
             cur.execute("SELECT * FROM auto_trading_settings WHERE user_id = %s FOR UPDATE", (user_id,))
             settings = cur.fetchone()
-        if not settings["enabled"] or settings["stopped"]:
+        if not settings["enabled"] or settings["stopped"] or settings["kill_switch"]:
             conn.commit()
             return {"actions": actions, "skipped": skipped, "logs": logs, "stateChanged": False, "settings": auto_trading_stats(conn, user_id)}
 
@@ -1846,14 +1906,19 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
         if scanner_results is None:
             user_strategy_settings = load_strategy_settings(conn, user_id)
             scope, symbols = scanner_symbols_for_scope(conn, user_id, scan_scope or settings["scan_scope"], include_crypto=True)
-            scanner_results, scan_errors = scan_symbols(symbols, user_strategy_settings)
+            with conn.cursor() as cur:
+                cur.execute("SELECT symbol FROM positions WHERE user_id = %s AND qty > 0 ORDER BY symbol", (user_id,))
+                held_symbols = [row["symbol"] for row in cur.fetchall()]
+            symbols = list(dict.fromkeys(held_symbols + symbols))[:AUTO_TRADING_SCAN_LIMIT]
+            scanner_results, scan_errors = scan_symbols(symbols, user_strategy_settings, settings["timeframe"])
             for error in scan_errors:
                 skipped.append({"symbol": error["symbol"], "reason": error["error"]})
                 logs.append(record_auto_log(conn, user_id, scan_id, {"symbol": error["symbol"], "signal": "ERROR", "strategy": "scanner"}, "SKIPPED", error["error"]))
         else:
             scope = scan_scope or settings["scan_scope"]
 
-        scanner_results = scanner_decision_results(scanner_results, settings["signal_mode"])
+        raw_scanner_results = scanner_results
+        scanner_results = scanner_decision_results(raw_scanner_results, settings["signal_mode"])
         quality_config = quality_filter_config(settings)
         signals_generated = len(scanner_results)
         signals_passed = 0
@@ -1861,15 +1926,85 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
         signals_rejected = 0
         ranked_results = sorted(scanner_results, key=lambda item: (item.get("finalScore") or 0, item.get("returnPct") or 0), reverse=True)
         with conn.cursor() as cur:
-            cur.execute("SELECT symbol, qty FROM positions WHERE user_id = %s AND qty > 0", (user_id,))
-            positions = {row["symbol"]: row["qty"] for row in cur.fetchall()}
+            cur.execute(
+                """
+                SELECT symbol, qty, avg_price, market, strategy_name, entry_price, highest_price,
+                       stop_loss_pct, take_profit_pct, trailing_stop_pct, max_holding_days, opened_at
+                FROM positions WHERE user_id = %s AND qty > 0
+                """,
+                (user_id,),
+            )
+            position_rows = {row["symbol"]: row for row in cur.fetchall()}
+            positions = {symbol: row["qty"] for symbol, row in position_rows.items()}
             cur.execute("SELECT cash_balance FROM accounts WHERE user_id = %s", (user_id,))
             cash_balance = cur.fetchone()["cash_balance"]
+            cur.execute(
+                "SELECT COUNT(*) AS count FROM trades WHERE user_id = %s AND execution_source = 'auto' AND executed_at >= date_trunc('day', now())",
+                (user_id,),
+            )
+            daily_orders = int(cur.fetchone()["count"] or 0)
+
+        raw_by_owner = {
+            (normalize_market_symbol(item["symbol"]), item.get("strategy")): item
+            for item in raw_scanner_results
+        }
+        crypto_value = Decimal("0")
+        for symbol, position in list(position_rows.items()):
+            try:
+                quote_data = normalize_quote(symbol)
+                price = Decimal(str(quote_data["price"]))
+                if market_kind(symbol)[0] == "crypto":
+                    crypto_value += price * position["qty"]
+                entry_price = position["entry_price"] or position["avg_price"]
+                highest_price = max(price, position["highest_price"] or Decimal("0"), entry_price)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE positions SET highest_price = %s, updated_at = now() WHERE user_id = %s AND symbol = %s",
+                        (highest_price, user_id, symbol),
+                    )
+                stop_loss = position["stop_loss_pct"] if position["stop_loss_pct"] is not None else settings["stop_loss_pct"]
+                take_profit = position["take_profit_pct"] if position["take_profit_pct"] is not None else settings["take_profit_pct"]
+                trailing_stop = position["trailing_stop_pct"] if position["trailing_stop_pct"] is not None else settings["trailing_stop_pct"]
+                max_holding_days = position["max_holding_days"] or settings["max_holding_days"]
+                held_days = (datetime.now(timezone.utc) - position["opened_at"]).total_seconds() / 86400 if position["opened_at"] else 0
+                exit_reason = None
+                if stop_loss and price <= entry_price * (Decimal("1") - Decimal(str(stop_loss)) / Decimal("100")):
+                    exit_reason = f"Stop Loss triggered ({float(stop_loss):g}%)."
+                elif take_profit and price >= entry_price * (Decimal("1") + Decimal(str(take_profit)) / Decimal("100")):
+                    exit_reason = f"Take Profit triggered ({float(take_profit):g}%)."
+                elif trailing_stop and highest_price > entry_price and price <= highest_price * (Decimal("1") - Decimal(str(trailing_stop)) / Decimal("100")):
+                    exit_reason = f"Trailing Stop triggered ({float(trailing_stop):g}%)."
+                elif max_holding_days and held_days >= int(max_holding_days):
+                    exit_reason = f"Max Holding Days reached ({int(max_holding_days)} days)."
+                owner_strategy = position["strategy_name"]
+                owner_signal = raw_by_owner.get((symbol, owner_strategy))
+                if not exit_reason and owner_signal and owner_signal.get("signal") == "SELL":
+                    exit_reason = f"Opening strategy {scanner_strategy_label(owner_strategy)} issued SELL."
+                if exit_reason:
+                    exit_item = owner_signal or {
+                        "symbol": symbol, "market": position["market"], "strategy": owner_strategy or "risk",
+                        "signal": "SELL", "finalScore": 0,
+                    }
+                    fill = execute_paper_trade(conn, user_id, symbol, "sell", position["qty"], quote_data, "auto", owner_strategy or "risk")
+                    positions.pop(symbol, None)
+                    position_rows.pop(symbol, None)
+                    cash_balance += fill["value"]
+                    daily_orders += 1
+                    actions.append({"symbol": symbol, "side": "sell", "strategy": owner_strategy or "risk", "qty": fill["qty"], "price": fill["price"], "value": fill["value"], "realizedPnl": fill["realizedPnl"]})
+                    signals_executed += 1
+                    logs.append(record_auto_log(conn, user_id, scan_id, exit_item, "EXECUTED", exit_reason, price=fill["price"], qty=fill["qty"]))
+            except Exception as error:
+                logs.append(record_auto_log(conn, user_id, scan_id, {"symbol": symbol, "strategy": position["strategy_name"] or "risk", "signal": "RISK"}, "SKIPPED", f"Position monitoring failed: {error}"))
 
         for item in ranked_results:
             symbol = normalize_market_symbol(item["symbol"])
             signal = item["signal"]
             strategy_name = item.get("strategy") or item.get("strategyLabel") or "scanner"
+            if signal == "SELL":
+                reason = "SELL ignored: only the opening strategy or position risk rules may close a position."
+                skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
+                logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason))
+                continue
             passed_quality, quality_reason = passes_auto_quality_filter(item, quality_config)
             if not passed_quality:
                 reason = quality_reason
@@ -1882,6 +2017,11 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
                 quote_data = normalize_quote(symbol)
                 price = Decimal(str(quote_data["price"]))
                 if signal == "BUY":
+                    if daily_orders >= int(settings["max_daily_orders"]):
+                        reason = "Max Daily Orders Reached."
+                        skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
+                        logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason, price=price))
+                        continue
                     already_holding = symbol in positions
                     if already_holding and not settings["allow_add_position"]:
                         reason = "Already Holding Position."
@@ -1901,32 +2041,42 @@ def run_auto_trading_cycle(user_id, scanner_results=None, scan_scope=None, trigg
                     totals = portfolio_totals(conn, user_id)
                     target_value = totals["equity"] * Decimal(str(settings["position_pct"])) / Decimal("100")
                     target_value = min(target_value, cash_balance)
+                    max_exposure = totals["equity"] * Decimal(str(settings["max_portfolio_exposure_pct"])) / Decimal("100")
+                    if totals["positions_value"] + target_value > max_exposure:
+                        reason = "Max Portfolio Exposure Reached."
+                        skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
+                        logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason, price=price))
+                        continue
+                    if market_kind(symbol)[0] == "crypto":
+                        max_crypto = totals["equity"] * Decimal(str(settings["max_crypto_exposure_pct"])) / Decimal("100")
+                        if crypto_value + target_value > max_crypto:
+                            reason = "Max Crypto Exposure Reached."
+                            skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
+                            logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason, price=price))
+                            continue
                     if target_value <= 0 or price <= 0:
                         reason = "Insufficient Cash."
                         skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
                         logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason, price=price))
                         continue
                     qty = target_value / price
-                    fill = execute_paper_trade(conn, user_id, symbol, "buy", qty, quote_data, "auto", strategy_name, signal, item.get("reason") or quality_reason)
+                    position_risk = {
+                        "stop_loss_pct": settings["stop_loss_pct"],
+                        "take_profit_pct": settings["take_profit_pct"],
+                        "trailing_stop_pct": settings["trailing_stop_pct"],
+                        "max_holding_days": settings["max_holding_days"],
+                        "timeframe": settings["timeframe"],
+                    }
+                    fill = execute_paper_trade(conn, user_id, symbol, "buy", qty, quote_data, "auto", strategy_name, signal, item.get("reason") or quality_reason, position_risk)
                     positions[symbol] = positions.get(symbol, Decimal("0")) + fill["qty"]
                     cash_balance -= fill["value"]
+                    daily_orders += 1
+                    if market_kind(symbol)[0] == "crypto":
+                        crypto_value += fill["value"]
                     actions.append({"symbol": symbol, "side": "buy", "strategy": strategy_name, "qty": fill["qty"], "price": fill["price"], "value": fill["value"]})
                     signals_executed += 1
                     reason = "Position Added" if already_holding else "Position Opened"
                     logs.append(record_auto_log(conn, user_id, scan_id, item, "EXECUTED", reason, price=fill["price"], qty=fill["qty"]))
-                elif signal == "SELL":
-                    qty = positions.get(symbol)
-                    if not qty:
-                        reason = "No Position."
-                        skipped.append({"symbol": symbol, "signal": signal, "reason": reason})
-                        logs.append(record_auto_log(conn, user_id, scan_id, item, "SKIPPED", reason, price=price))
-                        continue
-                    fill = execute_paper_trade(conn, user_id, symbol, "sell", qty, quote_data, "auto", strategy_name)
-                    positions.pop(symbol, None)
-                    cash_balance += fill["value"]
-                    actions.append({"symbol": symbol, "side": "sell", "strategy": strategy_name, "qty": fill["qty"], "price": fill["price"], "value": fill["value"], "realizedPnl": fill["realizedPnl"]})
-                    signals_executed += 1
-                    logs.append(record_auto_log(conn, user_id, scan_id, item, "EXECUTED", "Position Closed", price=fill["price"], qty=fill["qty"]))
             except Exception as error:
                 reason = str(error)
                 signals_rejected += 1
@@ -1971,14 +2121,14 @@ def start_auto_trading_scheduler():
                     FROM auto_trading_settings
                     WHERE enabled = true
                       AND stopped = false
+                      AND kill_switch = false
                       AND (
                         last_run_at IS NULL
-                        OR last_run_at <= now() - (%s::text || ' seconds')::interval
+                        OR last_run_at <= now() - (scan_interval_minutes::text || ' minutes')::interval
                       )
                     ORDER BY COALESCE(last_run_at, '1970-01-01'::timestamptz) ASC
                     LIMIT 20
                     """,
-                    (AUTO_TRADING_INTERVAL_SECONDS,),
                 )
                 return [row["user_id"] for row in cur.fetchall()]
 
@@ -2316,7 +2466,8 @@ class Handler(SimpleHTTPRequestHandler):
                 cur.execute(
                     """
                     SELECT symbol, qty, avg_price, currency, market, strategy_name, signal_source,
-                           entry_reason, entry_price, opened_at
+                           entry_reason, entry_price, highest_price, stop_loss_pct, take_profit_pct,
+                           trailing_stop_pct, max_holding_days, timeframe, opened_at
                     FROM positions
                     WHERE user_id = %s AND qty > 0
                     ORDER BY symbol
@@ -2492,6 +2643,12 @@ class Handler(SimpleHTTPRequestHandler):
                     "signalSource": row["signal_source"],
                     "entryReason": row["entry_reason"],
                     "entryPrice": row["entry_price"],
+                    "highestPrice": row["highest_price"],
+                    "stopLossPct": row["stop_loss_pct"],
+                    "takeProfitPct": row["take_profit_pct"],
+                    "trailingStopPct": row["trailing_stop_pct"],
+                    "maxHoldingDays": row["max_holding_days"],
+                    "timeframe": row["timeframe"],
                     "openedAt": int(row["opened_at"].timestamp() * 1000) if row["opened_at"] else None,
                 }
                 for row in positions
@@ -2821,10 +2978,13 @@ class Handler(SimpleHTTPRequestHandler):
                     INSERT INTO auto_trading_settings
                         (user_id, enabled, stopped, stop_reason, position_pct, max_positions, max_daily_loss_pct,
                          max_total_drawdown_pct, cooldown_hours, allow_add_position, scan_scope, signal_mode, scheduler_status,
+                         timeframe, scan_interval_minutes, stop_loss_pct, take_profit_pct, trailing_stop_pct,
+                         max_holding_days, max_portfolio_exposure_pct, max_crypto_exposure_pct, max_daily_orders, kill_switch,
                          quality_mode, quality_min_score, quality_min_sharpe, quality_min_return_pct,
                          quality_max_drawdown_pct, quality_min_trade_count,
                          enabled_at, updated_at)
                     VALUES (%s, %s, false, '', %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s,
                             CASE WHEN %s THEN now() ELSE NULL END, now())
                     ON CONFLICT (user_id)
@@ -2841,6 +3001,16 @@ class Handler(SimpleHTTPRequestHandler):
                         scan_scope = EXCLUDED.scan_scope,
                         signal_mode = EXCLUDED.signal_mode,
                         scheduler_status = EXCLUDED.scheduler_status,
+                        timeframe = EXCLUDED.timeframe,
+                        scan_interval_minutes = EXCLUDED.scan_interval_minutes,
+                        stop_loss_pct = EXCLUDED.stop_loss_pct,
+                        take_profit_pct = EXCLUDED.take_profit_pct,
+                        trailing_stop_pct = EXCLUDED.trailing_stop_pct,
+                        max_holding_days = EXCLUDED.max_holding_days,
+                        max_portfolio_exposure_pct = EXCLUDED.max_portfolio_exposure_pct,
+                        max_crypto_exposure_pct = EXCLUDED.max_crypto_exposure_pct,
+                        max_daily_orders = EXCLUDED.max_daily_orders,
+                        kill_switch = EXCLUDED.kill_switch,
                         quality_mode = EXCLUDED.quality_mode,
                         quality_min_score = EXCLUDED.quality_min_score,
                         quality_min_sharpe = EXCLUDED.quality_min_sharpe,
@@ -2866,6 +3036,16 @@ class Handler(SimpleHTTPRequestHandler):
                         settings["scanScope"],
                         settings["signalMode"],
                         "running" if settings["enabled"] else "disabled",
+                        settings["timeframe"],
+                        settings["scanIntervalMinutes"],
+                        Decimal(str(settings["stopLossPct"])),
+                        Decimal(str(settings["takeProfitPct"])),
+                        Decimal(str(settings["trailingStopPct"])),
+                        settings["maxHoldingDays"],
+                        Decimal(str(settings["maxPortfolioExposurePct"])),
+                        Decimal(str(settings["maxCryptoExposurePct"])),
+                        settings["maxDailyOrders"],
+                        settings["killSwitch"],
                         settings["qualityMode"],
                         Decimal(str(settings["qualityMinScore"])),
                         Decimal(str(settings["qualityMinSharpe"])),

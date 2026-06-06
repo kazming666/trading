@@ -144,12 +144,22 @@ const els = {
   autoSignalsRejected: document.querySelector("#autoSignalsRejected"),
   autoScanScopeSelect: document.querySelector("#autoScanScopeSelect"),
   autoSignalModeSelect: document.querySelector("#autoSignalModeSelect"),
+  autoTimeframeSelect: document.querySelector("#autoTimeframeSelect"),
+  autoScanIntervalSelect: document.querySelector("#autoScanIntervalSelect"),
   autoPositionPctSelect: document.querySelector("#autoPositionPctSelect"),
   autoMaxPositionsSelect: document.querySelector("#autoMaxPositionsSelect"),
   autoMaxLossSelect: document.querySelector("#autoMaxLossSelect"),
   autoMaxTotalDrawdownSelect: document.querySelector("#autoMaxTotalDrawdownSelect"),
   autoCooldownSelect: document.querySelector("#autoCooldownSelect"),
   autoAllowAddInput: document.querySelector("#autoAllowAddInput"),
+  autoStopLossInput: document.querySelector("#autoStopLossInput"),
+  autoTakeProfitInput: document.querySelector("#autoTakeProfitInput"),
+  autoTrailingStopInput: document.querySelector("#autoTrailingStopInput"),
+  autoMaxHoldingDaysInput: document.querySelector("#autoMaxHoldingDaysInput"),
+  autoMaxPortfolioExposureInput: document.querySelector("#autoMaxPortfolioExposureInput"),
+  autoMaxCryptoExposureInput: document.querySelector("#autoMaxCryptoExposureInput"),
+  autoMaxDailyOrdersInput: document.querySelector("#autoMaxDailyOrdersInput"),
+  autoKillSwitchInput: document.querySelector("#autoKillSwitchInput"),
   autoQualityModeSelect: document.querySelector("#autoQualityModeSelect"),
   autoQualityMinScoreInput: document.querySelector("#autoQualityMinScoreInput"),
   autoQualityMinSharpeInput: document.querySelector("#autoQualityMinSharpeInput"),
@@ -296,6 +306,16 @@ function emptyState() {
       allowAddPosition: false,
       scanScope: "mixed",
       signalMode: "best",
+      timeframe: "1h",
+      scanIntervalMinutes: 15,
+      stopLossPct: 5,
+      takeProfitPct: 15,
+      trailingStopPct: 8,
+      maxHoldingDays: 30,
+      maxPortfolioExposurePct: 70,
+      maxCryptoExposurePct: 20,
+      maxDailyOrders: 10,
+      killSwitch: false,
       qualityMode: "normal",
       qualityMinScore: 0,
       qualityMinSharpe: -0.5,
@@ -903,6 +923,10 @@ function renderPositions() {
         <div><span>\u6d6e\u52a8\u6536\u76ca\u7387</span><span class="${pnl >= 0 ? "up" : "down"}">${percentText(pnlRate)}</span></div>
         <div><span>\u6301\u4ed3\u5929\u6570</span><span>${holdingDays}</span></div>
         <div><span>Entry Time</span><span>${fmtDateTime(openedAt)}</span></div>
+        <div><span>Timeframe</span><span>${pos.timeframe || "--"}</span></div>
+        <div><span>Stop / Take Profit</span><span>${pos.stopLossPct ?? "--"}% / ${pos.takeProfitPct ?? "--"}%</span></div>
+        <div><span>Trailing Stop</span><span>${pos.trailingStopPct ?? "--"}%</span></div>
+        <div><span>Max Holding Days</span><span>${pos.maxHoldingDays ?? "--"}</span></div>
       </div>
     `;
   }).join("");
@@ -1354,20 +1378,30 @@ function renderAutoTrading() {
   els.autoEnabledInput.checked = enabled;
   els.autoScanScopeSelect.value = auto.scanScope || "mixed";
   els.autoSignalModeSelect.value = auto.signalMode || "best";
+  els.autoTimeframeSelect.value = auto.timeframe || "1h";
+  els.autoScanIntervalSelect.value = String(Number(auto.scanIntervalMinutes || 15));
   els.autoPositionPctSelect.value = String(Number(auto.positionPct || 10));
   els.autoMaxPositionsSelect.value = String(Number(auto.maxPositions || 3));
   els.autoMaxLossSelect.value = String(Number(auto.maxDailyLossPct || 5));
   els.autoMaxTotalDrawdownSelect.value = String(Number(auto.maxTotalDrawdownPct || 20));
   els.autoCooldownSelect.value = String(Number(auto.cooldownHours || 6));
   els.autoAllowAddInput.checked = Boolean(auto.allowAddPosition);
+  els.autoStopLossInput.value = String(Number(auto.stopLossPct ?? 5));
+  els.autoTakeProfitInput.value = String(Number(auto.takeProfitPct ?? 15));
+  els.autoTrailingStopInput.value = String(Number(auto.trailingStopPct ?? 8));
+  els.autoMaxHoldingDaysInput.value = String(Number(auto.maxHoldingDays ?? 30));
+  els.autoMaxPortfolioExposureInput.value = String(Number(auto.maxPortfolioExposurePct ?? 70));
+  els.autoMaxCryptoExposureInput.value = String(Number(auto.maxCryptoExposurePct ?? 20));
+  els.autoMaxDailyOrdersInput.value = String(Number(auto.maxDailyOrders ?? 10));
+  els.autoKillSwitchInput.checked = Boolean(auto.killSwitch);
   els.autoQualityModeSelect.value = auto.qualityMode || "normal";
   els.autoQualityMinScoreInput.value = String(Number(auto.qualityMinScore ?? 0));
   els.autoQualityMinSharpeInput.value = String(Number(auto.qualityMinSharpe ?? -0.5));
   els.autoQualityMinReturnInput.value = String(Number(auto.qualityMinReturnPct ?? -10));
   els.autoQualityMaxDrawdownInput.value = String(Number(auto.qualityMaxDrawdownPct ?? 50));
   els.autoQualityMinTradesInput.value = String(Number(auto.qualityMinTradeCount ?? 3));
-  els.autoRunStatus.textContent = stopped ? "Stopped" : enabled ? "Running" : "Disabled";
-  els.autoRunStatus.className = stopped ? "down" : enabled ? "up" : "";
+  els.autoRunStatus.textContent = auto.killSwitch ? "Kill Switch" : stopped ? "Stopped" : enabled ? "Running" : "Disabled";
+  els.autoRunStatus.className = auto.killSwitch || stopped ? "down" : enabled ? "up" : "";
   els.autoEnabledAt.textContent = auto.enabledAt ? fmtDateTime(auto.enabledAt) : "--";
   els.autoTodayTrades.textContent = number.format(auto.todayTrades || 0);
   els.autoTotalTrades.textContent = number.format(auto.totalTrades || 0);
@@ -1377,8 +1411,8 @@ function renderAutoTrading() {
   els.autoLastScanAt.textContent = auto.lastScanAt ? fmtDateTime(auto.lastScanAt) : "--";
   els.autoNextScanAt.textContent = auto.nextScanAt ? fmtDateTime(auto.nextScanAt) : "--";
   els.autoLastExecutedSignal.textContent = auto.lastExecutedSignal || (auto.lastExecuted ? `${auto.lastExecuted.symbol} ${auto.lastExecuted.signal}` : "--");
-  els.autoSchedulerStatus.textContent = stopped ? "Stopped" : enabled ? (auto.schedulerStatus || "running") : "disabled";
-  els.autoSchedulerStatus.className = stopped ? "down" : enabled ? "up" : "";
+  els.autoSchedulerStatus.textContent = auto.killSwitch ? "Paused by Kill Switch" : stopped ? "Stopped" : enabled ? (auto.schedulerStatus || "running") : "disabled";
+  els.autoSchedulerStatus.className = auto.killSwitch || stopped ? "down" : enabled ? "up" : "";
   els.autoRunningTime.textContent = fmtDuration(auto.runningTimeMs);
   els.autoSignalsGenerated.textContent = number.format(auto.signalsGenerated || 0);
   els.autoSignalsPassed.textContent = number.format(auto.signalsPassedFilter || 0);
@@ -1456,12 +1490,22 @@ function autoSettingsPayload() {
     enabled: Boolean(els.autoEnabledInput?.checked),
     scanScope: els.autoScanScopeSelect?.value || "mixed",
     signalMode: els.autoSignalModeSelect?.value || "best",
+    timeframe: els.autoTimeframeSelect?.value || "1h",
+    scanIntervalMinutes: Number(els.autoScanIntervalSelect?.value || 15),
     positionPct: Number(els.autoPositionPctSelect?.value || 10),
     maxPositions: Number(els.autoMaxPositionsSelect?.value || 3),
     maxDailyLossPct: Number(els.autoMaxLossSelect?.value || 5),
     maxTotalDrawdownPct: Number(els.autoMaxTotalDrawdownSelect?.value || 20),
     cooldownHours: Number(els.autoCooldownSelect?.value || 6),
     allowAddPosition: Boolean(els.autoAllowAddInput?.checked),
+    stopLossPct: Number(els.autoStopLossInput?.value || 5),
+    takeProfitPct: Number(els.autoTakeProfitInput?.value || 15),
+    trailingStopPct: Number(els.autoTrailingStopInput?.value || 8),
+    maxHoldingDays: Number(els.autoMaxHoldingDaysInput?.value || 30),
+    maxPortfolioExposurePct: Number(els.autoMaxPortfolioExposureInput?.value || 70),
+    maxCryptoExposurePct: Number(els.autoMaxCryptoExposureInput?.value || 20),
+    maxDailyOrders: Number(els.autoMaxDailyOrdersInput?.value || 10),
+    killSwitch: Boolean(els.autoKillSwitchInput?.checked),
     qualityMode: els.autoQualityModeSelect?.value || "normal",
     qualityMinScore: Number(els.autoQualityMinScoreInput?.value || 0),
     qualityMinSharpe: Number(els.autoQualityMinSharpeInput?.value || -0.5),

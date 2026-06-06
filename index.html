@@ -7,13 +7,13 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>&#27169;&#25311;&#32929;&#31080;&#20132;&#26131;&#21488;</title>
-    <link rel="stylesheet" href="styles.css?v=20260606d">
+    <link rel="stylesheet" href="styles.css?v=20260606e">
   </head>
   <body>
     <main class="app-shell">
       <section class="topbar">
         <div>
-          <p class="eyebrow">Paper Trading Desk · Build 20260606d</p>
+          <p class="eyebrow">Paper Trading Desk · Build 20260606e</p>
           <h1>&#27169;&#25311;&#32929;&#31080;&#20132;&#26131;&#21488;</h1>
         </div>
         <div class="status-strip">
@@ -311,6 +311,22 @@
               </select>
             </label>
             <label>
+              Signal Timeframe
+              <select id="autoTimeframeSelect">
+                <option value="1d">Daily</option>
+                <option value="1h" selected>1 Hour</option>
+                <option value="15m">15 Minute</option>
+              </select>
+            </label>
+            <label>
+              Scan Interval
+              <select id="autoScanIntervalSelect">
+                <option value="5">5 minutes</option>
+                <option value="15" selected>15 minutes</option>
+                <option value="60">60 minutes</option>
+              </select>
+            </label>
+            <label>
               &#20449;&#21495;
               <select id="scannerSignalFilter">
                 <option value="all">&#20840;&#37096;</option>
@@ -527,6 +543,38 @@
             <label class="checkbox-line">
               <input id="autoAllowAddInput" type="checkbox">
               <span>Allow adding to existing positions</span>
+            </label>
+            <label>
+              Stop Loss %
+              <input id="autoStopLossInput" type="number" min="0" max="100" step="0.5" value="5">
+            </label>
+            <label>
+              Take Profit %
+              <input id="autoTakeProfitInput" type="number" min="0" max="1000" step="0.5" value="15">
+            </label>
+            <label>
+              Trailing Stop %
+              <input id="autoTrailingStopInput" type="number" min="0" max="100" step="0.5" value="8">
+            </label>
+            <label>
+              Max Holding Days
+              <input id="autoMaxHoldingDaysInput" type="number" min="1" max="3650" step="1" value="30">
+            </label>
+            <label>
+              Max Portfolio Exposure %
+              <input id="autoMaxPortfolioExposureInput" type="number" min="0" max="100" step="1" value="70">
+            </label>
+            <label>
+              Max Crypto Exposure %
+              <input id="autoMaxCryptoExposureInput" type="number" min="0" max="100" step="1" value="20">
+            </label>
+            <label>
+              Max Daily Orders
+              <input id="autoMaxDailyOrdersInput" type="number" min="1" max="1000" step="1" value="10">
+            </label>
+            <label class="checkbox-line">
+              <input id="autoKillSwitchInput" type="checkbox">
+              <span>Kill Switch (stop all automatic execution)</span>
             </label>
             <label>
               Quality Mode
@@ -991,6 +1039,6 @@ ETHUSDT</textarea>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260606d"></script>
+    <script src="app.js?v=20260606e"></script>
   </body>
 </html>
