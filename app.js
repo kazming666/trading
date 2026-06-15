@@ -934,7 +934,7 @@ function renderPositions() {
 
 function renderHistory() {
   if (!state.trades.length && !state.deposits?.length) {
-    els.historyBody.innerHTML = `<tr><td colspan="12">${text.noHistory}</td></tr>`;
+    els.historyBody.innerHTML = `<tr><td colspan="15">${text.noHistory}</td></tr>`;
     els.pageInfo.textContent = "1 / 1";
     els.prevPageBtn.disabled = true;
     els.nextPageBtn.disabled = true;
@@ -962,10 +962,14 @@ function renderHistory() {
           <td>--</td>
           <td>--</td>
           <td>--</td>
+          <td>--</td>
+          <td>--</td>
+          <td>--</td>
         </tr>
       `;
     }
     const equityChange = Number(item.equityChange || 0);
+    const realizedPnl = item.realizedPnl == null ? null : Number(item.realizedPnl);
     return `
       <tr>
         <td>${item.id}</td>
@@ -975,11 +979,14 @@ function renderHistory() {
         <td>${number.format(item.qty)}</td>
         <td>${fmtMoney(item.price, item.currency)}</td>
         <td>${fmtMoney(item.value, item.currency)}</td>
+        <td>${item.executionSource === "auto" ? "Auto Trading" : "Manual"}</td>
+        <td>${strategyLabel(item.strategyName || "manual")}</td>
+        <td class="${realizedPnl == null ? "" : realizedPnl >= 0 ? "up" : "down"}">${realizedPnl == null ? "--" : fmtMoney(realizedPnl, item.currency)}</td>
         <td>${item.accountBalanceAfter == null ? "--" : fmtMoney(item.accountBalanceAfter)}</td>
         <td>${item.positionQtyAfter == null ? "--" : number.format(item.positionQtyAfter)}</td>
         <td>${item.equityBefore == null ? "--" : fmtMoney(item.equityBefore)}</td>
         <td>${item.equityAfter == null ? "--" : fmtMoney(item.equityAfter)}</td>
-        <td class="${equityChange >= 0 ? "up" : "down"}">${item.equityChange == null ? "--" : fmtMoney(item.equityChange)}</td>
+        <td class="${equityChange > 0 ? "up" : equityChange < 0 ? "down" : ""}" title="无手续费和滑点时，买卖只是在现金与持仓之间转换，成交瞬间资产变化应为 0。">${item.equityChange == null ? "--" : fmtMoney(item.equityChange)}</td>
       </tr>
     `;
   }).join("");
@@ -2293,7 +2300,7 @@ function csvCell(value) {
 
 function exportTrades() {
   const rows = [
-    ["\u65f6\u95f4", "\u80a1\u7968", "\u4e70\u5356\u65b9\u5411", "\u6570\u91cf", "\u4ef7\u683c", "\u91d1\u989d", "\u6210\u4ea4\u540e\u4f59\u989d"],
+    ["时间", "股票", "买卖方向", "数量", "价格", "金额", "执行来源", "策略", "已实现盈亏", "成交后余额", "成交瞬间资产变化"],
     ...state.trades.map((trade) => [
       fmtDateTime(trade.time),
       trade.symbol,
@@ -2301,7 +2308,11 @@ function exportTrades() {
       Number(trade.qty),
       Number(trade.price),
       Number(trade.value),
-      trade.accountBalanceAfter == null ? "" : Number(trade.accountBalanceAfter)
+      trade.executionSource || "manual",
+      trade.strategyName || "manual",
+      trade.realizedPnl == null ? "" : Number(trade.realizedPnl),
+      trade.accountBalanceAfter == null ? "" : Number(trade.accountBalanceAfter),
+      trade.equityChange == null ? "" : Number(trade.equityChange)
     ])
   ];
   const csv = `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;

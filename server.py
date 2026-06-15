@@ -1311,16 +1311,20 @@ def ensure_account(conn, user_id):
         )
 
 
-def estimate_positions_value(conn, user_id):
+def estimate_positions_value(conn, user_id, price_overrides=None):
+    price_overrides = price_overrides or {}
     with conn.cursor() as cur:
         cur.execute("SELECT symbol, qty, avg_price FROM positions WHERE user_id = %s AND qty > 0", (user_id,))
         positions = cur.fetchall()
     total = Decimal("0")
     for position in positions:
-        try:
-            price = Decimal(str(normalize_quote(position["symbol"])["price"]))
-        except Exception:
-            price = position["avg_price"]
+        if position["symbol"] in price_overrides:
+            price = Decimal(str(price_overrides[position["symbol"]]))
+        else:
+            try:
+                price = Decimal(str(normalize_quote(position["symbol"])["price"]))
+            except Exception:
+                price = position["avg_price"]
         total += position["qty"] * price
     return total
 
@@ -1371,8 +1375,8 @@ def record_daily_snapshot(conn, user_id, totals=None):
     return totals
 
 
-def record_equity_snapshot(conn, user_id, reason, related_trade_id=None):
-    totals = portfolio_totals(conn, user_id)
+def record_equity_snapshot(conn, user_id, reason, related_trade_id=None, totals=None):
+    totals = totals or portfolio_totals(conn, user_id)
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -1422,13 +1426,13 @@ def execute_paper_trade(conn, user_id, symbol, side, qty, quote_data=None, execu
     currency = quote_data["currency"]
 
     with conn.cursor() as cur:
-        cur.execute("SELECT cash_balance FROM accounts WHERE user_id = %s FOR UPDATE", (user_id,))
+        cur.execute("SELECT cash_balance, starting_cash FROM accounts WHERE user_id = %s FOR UPDATE", (user_id,))
         account = cur.fetchone()
         cur.execute("SELECT qty, avg_price FROM positions WHERE user_id = %s AND symbol = %s FOR UPDATE", (user_id, symbol))
         position = cur.fetchone()
         current_qty = position["qty"] if position else Decimal("0")
         avg_price = position["avg_price"] if position else Decimal("0")
-        equity_before = account["cash_balance"] + estimate_positions_value(conn, user_id)
+        equity_before = account["cash_balance"] + estimate_positions_value(conn, user_id, {symbol: price})
         realized_pnl = None
 
         if side == "buy":
@@ -1503,7 +1507,15 @@ def execute_paper_trade(conn, user_id, symbol, side, qty, quote_data=None, execu
             (user_id, order_id, symbol, side, qty, price, value, currency, execution_source, strategy_name),
         )
         trade_id = cur.fetchone()["id"]
-        equity_after = record_equity_snapshot(conn, user_id, "trade", trade_id)
+        # A fill only converts cash into a position or a position into cash. With
+        # no fees or slippage, the execution itself must not change total equity.
+        trade_totals = {
+            "cash": account_balance_after,
+            "starting_cash": account["starting_cash"],
+            "positions_value": equity_before - account_balance_after,
+            "equity": equity_before,
+        }
+        equity_after = record_equity_snapshot(conn, user_id, "trade", trade_id, trade_totals)
         cur.execute(
             """
             UPDATE trades

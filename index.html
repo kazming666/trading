@@ -7,13 +7,13 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>&#27169;&#25311;&#32929;&#31080;&#20132;&#26131;&#21488;</title>
-    <link rel="stylesheet" href="styles.css?v=20260606f">
+    <link rel="stylesheet" href="styles.css?v=20260615a">
   </head>
   <body>
     <main class="app-shell">
       <section class="topbar">
         <div>
-          <p class="eyebrow">Paper Trading Desk · Build 20260606f</p>
+          <p class="eyebrow">Paper Trading Desk · Build 20260615a</p>
           <h1>&#27169;&#25311;&#32929;&#31080;&#20132;&#26131;&#21488;</h1>
         </div>
         <div class="status-strip">
@@ -224,7 +224,7 @@
           <div class="panel-head">
             <div>
               <h2>&#20132;&#26131;&#35760;&#24405;</h2>
-              <p class="mini-note">&#21547;&#20080;&#21334;&#25104;&#20132;&#21644;&#36164;&#37329;&#20837;&#37329;&#35760;&#24405;&#12290;</p>
+              <p class="mini-note">已实现盈亏是卖出成交确认的盈利或亏损。无手续费和滑点时，成交瞬间总资产变化通常为 0。</p>
             </div>
             <div class="panel-actions">
               <button id="exportTradesBtn" class="ghost-btn" type="button">&#23548;&#20986;&#20132;&#26131;&#35760;&#24405;</button>
@@ -242,11 +242,14 @@
                   <th>&#25968;&#37327;</th>
                   <th>&#20215;&#26684;</th>
                   <th>&#37329;&#39069;</th>
+                  <th>执行来源</th>
+                  <th>策略</th>
+                  <th>已实现盈亏</th>
                   <th>&#25104;&#20132;&#21518;&#20313;&#39069;</th>
                   <th>&#25104;&#20132;&#21518;&#25345;&#20179;</th>
                   <th>&#25104;&#20132;&#21069;&#24635;&#36164;&#20135;</th>
                   <th>&#25104;&#20132;&#21518;&#24635;&#36164;&#20135;</th>
-                  <th>&#24635;&#36164;&#20135;&#21464;&#21270;</th>
+                  <th>成交瞬间资产变化</th>
                 </tr>
               </thead>
               <tbody id="historyBody"></tbody>
@@ -1039,6 +1042,6 @@ ETHUSDT</textarea>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
-    <script src="app.js?v=20260606f"></script>
+    <script src="app.js?v=20260615a"></script>
   </body>
 </html>
