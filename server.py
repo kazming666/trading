@@ -1242,7 +1242,15 @@ def db_ready():
 def db_connect():
     if not db_ready():
         raise RuntimeError("PostgreSQL is not configured. Set DATABASE_URL and install requirements.txt.")
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10)
+    try:
+        return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10)
+    except Exception as error:
+        if "SSL connection has been closed unexpectedly" not in str(error) or "sslmode=" in DATABASE_URL:
+            raise
+        separator = "&" if "?" in DATABASE_URL else "?"
+        fallback_url = f"{DATABASE_URL}{separator}sslmode=disable"
+        print("Warning: PostgreSQL SSL negotiation failed; retrying with sslmode=disable.", flush=True)
+        return psycopg.connect(fallback_url, row_factory=dict_row, connect_timeout=10)
 
 
 def init_db():
