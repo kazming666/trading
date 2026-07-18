@@ -39,6 +39,7 @@ PROJECT_DIR = Path(__file__).resolve().parent
 AUTO_TRADING_INTERVAL_SECONDS = 300
 AUTO_TRADING_SCAN_LIMIT = 60
 AUTO_SCHEDULER_LOCK = threading.Lock()
+DB_INITIALIZED = False
 
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range={range}&interval={interval}"
 YAHOO_CHART_PERIOD = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={period1}&period2={period2}&interval={interval}"
@@ -1240,13 +1241,15 @@ def db_ready():
 def db_connect():
     if not db_ready():
         raise RuntimeError("PostgreSQL is not configured. Set DATABASE_URL and install requirements.txt.")
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10)
 
 
 def init_db():
+    global DB_INITIALIZED
     if not db_ready():
         print("Warning: DATABASE_URL is not configured; auth/account APIs will return 503.")
-        return
+        DB_INITIALIZED = False
+        return False
     schema_path = PROJECT_DIR / "schema.sql"
     schema = schema_path.read_text(encoding="utf-8")
     with db_connect() as conn:
@@ -1260,6 +1263,8 @@ def init_db():
                     preview = " ".join(statement.split())[:240]
                     print(f"Schema migration failed: {preview}", flush=True)
                     raise
+    DB_INITIALIZED = True
+    return True
 
 
 def hash_password(password, salt=None):
@@ -2377,7 +2382,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def handle_health(self, parsed):
         db_ok = False
-        if db_ready():
+        if DB_INITIALIZED and db_ready():
             try:
                 with db_connect() as conn:
                     with conn.cursor() as cur:
@@ -2385,7 +2390,7 @@ class Handler(SimpleHTTPRequestHandler):
                         db_ok = True
             except Exception:
                 db_ok = False
-        self.end_json(200, {"ok": True, "database": db_ok, "serverTime": int(time.time() * 1000)})
+        self.end_json(200, {"ok": True, "database": db_ok, "databaseInitialized": DB_INITIALIZED, "serverTime": int(time.time() * 1000)})
 
     def handle_register(self, parsed):
         data = self.read_json()
@@ -3513,9 +3518,14 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    init_db()
-    start_equity_snapshot_worker()
-    start_auto_trading_scheduler()
+    try:
+        database_initialized = init_db()
+    except Exception as error:
+        database_initialized = False
+        print(f"Warning: database initialization failed; serving app with database APIs degraded: {error}", flush=True)
+    if database_initialized:
+        start_equity_snapshot_worker()
+        start_auto_trading_scheduler()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Real-market paper trading server: http://{HOST}:{PORT}/")
     server.serve_forever()
