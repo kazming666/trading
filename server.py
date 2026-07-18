@@ -36,6 +36,7 @@ DEFAULT_CASH = Decimal("100000")
 DEFAULT_SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "600519.SS", "000001.SZ", "0700.HK"]
 CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"]
 PROJECT_DIR = Path(__file__).resolve().parent
+APP_BUILD = "20260719-db-ssl-fallback"
 AUTO_TRADING_INTERVAL_SECONDS = 300
 AUTO_TRADING_SCAN_LIMIT = 60
 AUTO_SCHEDULER_LOCK = threading.Lock()
@@ -2409,6 +2410,7 @@ class Handler(SimpleHTTPRequestHandler):
             "databaseReachable": db_reachable,
             "databaseInitialized": DB_INITIALIZED,
             "databaseError": db_error,
+            "build": APP_BUILD,
             "serverTime": int(time.time() * 1000),
         })
 
