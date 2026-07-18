@@ -40,6 +40,7 @@ AUTO_TRADING_INTERVAL_SECONDS = 300
 AUTO_TRADING_SCAN_LIMIT = 60
 AUTO_SCHEDULER_LOCK = threading.Lock()
 DB_INITIALIZED = False
+DB_INIT_ERROR = ""
 
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range={range}&interval={interval}"
 YAHOO_CHART_PERIOD = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={period1}&period2={period2}&interval={interval}"
@@ -1245,9 +1246,10 @@ def db_connect():
 
 
 def init_db():
-    global DB_INITIALIZED
+    global DB_INITIALIZED, DB_INIT_ERROR
     if not db_ready():
-        print("Warning: DATABASE_URL is not configured; auth/account APIs will return 503.")
+        DB_INIT_ERROR = "DATABASE_URL is not configured or psycopg is unavailable."
+        print(f"Warning: {DB_INIT_ERROR}; auth/account APIs will return 503.")
         DB_INITIALIZED = False
         return False
     schema_path = PROJECT_DIR / "schema.sql"
@@ -1261,9 +1263,11 @@ def init_db():
                 except Exception as error:
                     conn.rollback()
                     preview = " ".join(statement.split())[:240]
+                    DB_INIT_ERROR = f"{error}; statement: {preview}"
                     print(f"Schema migration failed: {preview}", flush=True)
                     raise
     DB_INITIALIZED = True
+    DB_INIT_ERROR = ""
     return True
 
 
@@ -2381,16 +2385,24 @@ class Handler(SimpleHTTPRequestHandler):
         return user
 
     def handle_health(self, parsed):
-        db_ok = False
-        if DB_INITIALIZED and db_ready():
+        db_reachable = False
+        db_error = DB_INIT_ERROR
+        if db_ready():
             try:
                 with db_connect() as conn:
                     with conn.cursor() as cur:
                         cur.execute("SELECT 1")
-                        db_ok = True
-            except Exception:
-                db_ok = False
-        self.end_json(200, {"ok": True, "database": db_ok, "databaseInitialized": DB_INITIALIZED, "serverTime": int(time.time() * 1000)})
+                        db_reachable = True
+            except Exception as error:
+                db_error = str(error)
+        self.end_json(200, {
+            "ok": True,
+            "database": db_reachable and DB_INITIALIZED,
+            "databaseReachable": db_reachable,
+            "databaseInitialized": DB_INITIALIZED,
+            "databaseError": db_error,
+            "serverTime": int(time.time() * 1000),
+        })
 
     def handle_register(self, parsed):
         data = self.read_json()
