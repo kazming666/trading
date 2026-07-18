@@ -1251,8 +1251,15 @@ def init_db():
     schema = schema_path.read_text(encoding="utf-8")
     with db_connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(schema)
-        conn.commit()
+            for statement in [part.strip() for part in schema.split(";") if part.strip()]:
+                try:
+                    cur.execute(statement)
+                    conn.commit()
+                except Exception as error:
+                    conn.rollback()
+                    preview = " ".join(statement.split())[:240]
+                    print(f"Schema migration failed: {preview}", flush=True)
+                    raise
 
 
 def hash_password(password, salt=None):

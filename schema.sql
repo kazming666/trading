@@ -48,6 +48,17 @@ CREATE TABLE IF NOT EXISTS strategy_settings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE strategy_settings ADD COLUMN IF NOT EXISTS ma_fast INTEGER NOT NULL DEFAULT 5;
+ALTER TABLE strategy_settings ADD COLUMN IF NOT EXISTS ma_slow INTEGER NOT NULL DEFAULT 20;
+ALTER TABLE strategy_settings ADD COLUMN IF NOT EXISTS macd_fast INTEGER NOT NULL DEFAULT 12;
+ALTER TABLE strategy_settings ADD COLUMN IF NOT EXISTS macd_slow INTEGER NOT NULL DEFAULT 26;
+ALTER TABLE strategy_settings ADD COLUMN IF NOT EXISTS macd_signal INTEGER NOT NULL DEFAULT 9;
+ALTER TABLE strategy_settings ADD COLUMN IF NOT EXISTS rsi_period INTEGER NOT NULL DEFAULT 14;
+ALTER TABLE strategy_settings ADD COLUMN IF NOT EXISTS rsi_buy_threshold NUMERIC(10, 4) NOT NULL DEFAULT 30;
+ALTER TABLE strategy_settings ADD COLUMN IF NOT EXISTS rsi_sell_threshold NUMERIC(10, 4) NOT NULL DEFAULT 70;
+ALTER TABLE strategy_settings ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE strategy_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
 CREATE TABLE IF NOT EXISTS positions (
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     symbol TEXT NOT NULL,
@@ -223,6 +234,12 @@ CREATE TABLE IF NOT EXISTS account_transactions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE account_transactions DROP CONSTRAINT IF EXISTS account_transactions_type_check;
+ALTER TABLE account_transactions ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'USD';
+ALTER TABLE account_transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+UPDATE account_transactions SET type = 'adjustment' WHERE type IS NULL OR type NOT IN ('deposit', 'withdrawal', 'adjustment');
+ALTER TABLE account_transactions ADD CONSTRAINT account_transactions_type_check CHECK (type IN ('deposit', 'withdrawal', 'adjustment'));
+
 CREATE TABLE IF NOT EXISTS equity_history (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -233,6 +250,15 @@ CREATE TABLE IF NOT EXISTS equity_history (
     related_trade_id BIGINT REFERENCES trades(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE equity_history DROP CONSTRAINT IF EXISTS equity_history_reason_check;
+ALTER TABLE equity_history ADD COLUMN IF NOT EXISTS cash_balance NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE equity_history ADD COLUMN IF NOT EXISTS positions_value NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE equity_history ADD COLUMN IF NOT EXISTS reason TEXT NOT NULL DEFAULT 'adjustment';
+ALTER TABLE equity_history ADD COLUMN IF NOT EXISTS related_trade_id BIGINT REFERENCES trades(id) ON DELETE SET NULL;
+ALTER TABLE equity_history ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+UPDATE equity_history SET reason = 'adjustment' WHERE reason IS NULL OR reason NOT IN ('trade', 'deposit', 'withdrawal', 'adjustment', 'reset');
+ALTER TABLE equity_history ADD CONSTRAINT equity_history_reason_check CHECK (reason IN ('trade', 'deposit', 'withdrawal', 'adjustment', 'reset'));
 
 CREATE TABLE IF NOT EXISTS daily_snapshots (
     id BIGSERIAL PRIMARY KEY,
@@ -248,6 +274,17 @@ CREATE TABLE IF NOT EXISTS daily_snapshots (
     UNIQUE (user_id, snapshot_date)
 );
 
+ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS snapshot_date DATE;
+UPDATE daily_snapshots SET snapshot_date = CURRENT_DATE WHERE snapshot_date IS NULL;
+ALTER TABLE daily_snapshots ALTER COLUMN snapshot_date SET NOT NULL;
+ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS equity NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS cash_balance NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS positions_value NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS total_pnl NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS return_rate NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
 CREATE TABLE IF NOT EXISTS signal_history (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -258,6 +295,14 @@ CREATE TABLE IF NOT EXISTS signal_history (
     price NUMERIC(20, 8) NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE signal_history DROP CONSTRAINT IF EXISTS signal_history_signal_check;
+ALTER TABLE signal_history ADD COLUMN IF NOT EXISTS strategy_name TEXT NOT NULL DEFAULT 'moving_average';
+ALTER TABLE signal_history ADD COLUMN IF NOT EXISTS reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE signal_history ADD COLUMN IF NOT EXISTS price NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE signal_history ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+UPDATE signal_history SET signal = 'HOLD' WHERE signal IS NULL OR signal NOT IN ('BUY', 'SELL', 'HOLD');
+ALTER TABLE signal_history ADD CONSTRAINT signal_history_signal_check CHECK (signal IN ('BUY', 'SELL', 'HOLD'));
 
 CREATE TABLE IF NOT EXISTS backtest_history (
     id BIGSERIAL PRIMARY KEY,
@@ -273,6 +318,17 @@ CREATE TABLE IF NOT EXISTS backtest_history (
     trade_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE backtest_history ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT 'moving_average';
+ALTER TABLE backtest_history ADD COLUMN IF NOT EXISTS symbol TEXT NOT NULL DEFAULT 'AAPL';
+ALTER TABLE backtest_history ADD COLUMN IF NOT EXISTS start_date TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE backtest_history ADD COLUMN IF NOT EXISTS end_date TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE backtest_history ADD COLUMN IF NOT EXISTS return_pct NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE backtest_history ADD COLUMN IF NOT EXISTS max_drawdown NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE backtest_history ADD COLUMN IF NOT EXISTS sharpe_ratio NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE backtest_history ADD COLUMN IF NOT EXISTS win_rate NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE backtest_history ADD COLUMN IF NOT EXISTS trade_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE backtest_history ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 CREATE TABLE IF NOT EXISTS backtest_results (
     id BIGSERIAL PRIMARY KEY,
@@ -293,6 +349,20 @@ CREATE TABLE IF NOT EXISTS backtest_results (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS symbol TEXT NOT NULL DEFAULT 'AAPL';
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT 'moving_average';
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS params JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS start_time TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS return_pct NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS annual_return_pct NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS max_drawdown NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS win_rate NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS trade_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS avg_profit NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS avg_loss NUMERIC(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS runtime_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE backtest_results ADD COLUMN IF NOT EXISTS sharpe_ratio NUMERIC(20, 8) NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
