@@ -36,7 +36,7 @@ DEFAULT_CASH = Decimal("100000")
 DEFAULT_SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "600519.SS", "000001.SZ", "0700.HK"]
 CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"]
 PROJECT_DIR = Path(__file__).resolve().parent
-APP_BUILD = "20260719-db-ssl-require"
+APP_BUILD = "20260719-db-connect-diagnostics"
 AUTO_TRADING_INTERVAL_SECONDS = 300
 AUTO_TRADING_SCAN_LIMIT = 60
 AUTO_SCHEDULER_LOCK = threading.Lock()
@@ -1245,20 +1245,21 @@ def db_connect():
         raise RuntimeError("PostgreSQL is not configured. Set DATABASE_URL and install requirements.txt.")
     if "sslmode=" in DATABASE_URL:
         return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10)
-    try:
-        return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10)
-    except Exception as error:
-        if "SSL connection has been closed unexpectedly" not in str(error):
-            raise
-        separator = "&" if "?" in DATABASE_URL else "?"
-        ssl_url = f"{DATABASE_URL}{separator}sslmode=require"
+    separator = "&" if "?" in DATABASE_URL else "?"
+    attempts = [
+        ("default", DATABASE_URL),
+        ("sslmode=require", f"{DATABASE_URL}{separator}sslmode=require"),
+        ("sslmode=disable", f"{DATABASE_URL}{separator}sslmode=disable"),
+    ]
+    errors = []
+    for label, url in attempts:
         try:
-            print("Warning: PostgreSQL SSL negotiation failed; retrying with sslmode=require.", flush=True)
-            return psycopg.connect(ssl_url, row_factory=dict_row, connect_timeout=10)
-        except Exception as ssl_error:
-            disable_url = f"{DATABASE_URL}{separator}sslmode=disable"
-            print(f"Warning: sslmode=require failed ({ssl_error}); retrying with sslmode=disable.", flush=True)
-            return psycopg.connect(disable_url, row_factory=dict_row, connect_timeout=10)
+            if label != "default":
+                print(f"Warning: retrying PostgreSQL connection with {label}.", flush=True)
+            return psycopg.connect(url, row_factory=dict_row, connect_timeout=10)
+        except Exception as error:
+            errors.append(f"{label}: {error}")
+    raise RuntimeError("PostgreSQL connection attempts failed; " + " | ".join(errors))
 
 
 def init_db():
